@@ -37,7 +37,8 @@ if (Test-Python) {
             if ($Name) { $argList += @("--name", $Name) }
         }
         '^(查)$' {
-            if ($Target) { $argList += $Target }
+            if (-not $Target) { Write-Host "用法：查 <关键词> [-Lang py] [-Project X]"; exit 1 }
+            $argList += $Target
             if ($Lang) { $argList += @("--lang", $Lang) }
             if ($Project) { $argList += @("--project", $Project) }
         }
@@ -84,8 +85,9 @@ if ($Cmd -eq "配置") {
     }
     New-Item -ItemType Directory -Force -Path (Split-Path $configPath) | Out-Null
     # -Encoding utf8 在 PS5 下带 BOM，Python 侧用 utf-8-sig 读取，二者兼容
-    @{ temp_script_root = (Resolve-Path $Path).Path; configured_at = (Get-Date -Format s) } |
-        ConvertTo-Json | Set-Content -Encoding UTF8 $configPath
+    $cfg = @{ temp_script_root = (Resolve-Path $Path).Path; configured_at = (Get-Date -Format s) }
+    if ($Name) { $cfg["agent_name"] = $Name }   # 与 Python 版 配置 --name 一致：两工具共用默认署名
+    $cfg | ConvertTo-Json | Set-Content -Encoding UTF8 $configPath
     Write-Host "[配置] 根目录：$Path（结构已初始化，配置写入 $configPath）"
 } else {
     Write-Host "本机没有 Python，PS 封装仅支持『配置』。请安装 Python 3.8+ 以获得完整功能。"

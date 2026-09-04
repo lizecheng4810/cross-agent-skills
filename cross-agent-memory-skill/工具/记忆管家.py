@@ -4,11 +4,12 @@
 记忆管家 —— cross-agent-memory 的主工具（跨平台，需 Python 3.8+）
 
 说明：判断该分几层（1~N 层，不设上限）、深度阅读并填写记忆文件，由 Agent 按 SKILL.md 自主完成。
-本脚本只做机械操作。**层号约定 = 目录深度**：工作区根 = 第一层，向下一级 = 第二层……以此类推，
+本脚本只做机械操作。**层号约定 = 记忆层级序数**：工作区根 = 第一层；某文件夹的层号 =
+根到它的路径上拥有记忆层的祖先数 + 1（分组文件夹如 platforms 不建层就不占层号）。
 文件夹名形如 记忆第X层（X 为中文数字，一~九十九）。
   建层   就地创建 记忆第X层 文件夹（0_索引 + 6 件格式参考）；--层 接受中文数字（一/二/三/四…）或阿拉伯数字（1/2/3/4…）
   扫描   列出工作区里已有的 记忆第X层 文件夹（任意层数）
-  检查   层级完整性检查：按目录深度推断每层应有的 记忆第X层，找出缺失的候选子模块/子工程
+  检查   层级完整性检查：按记忆层级序数推断每处应有的 记忆第X层，找出缺失的候选子模块/子工程
   索引   为某层的记忆文件生成/更新指纹档案（记忆索引.json：sha256 + mtime + 更新者）
   校验   对比当前文件与指纹档案，报告被其他 Agent/Harness 改过的文件（并发检测）
   接手   一键接手入口：扫描 + 层级完整性检查 + 各层并发校验 + 临时脚本库配置联动检查
@@ -105,8 +106,19 @@ def layer_name(n: int) -> str:
 
 
 def expected_layer_depth(dirpath: Path, root: Path) -> int:
-    """目录深度 → 应建层号：根=第一层，向下一级=第二层……"""
-    return len(dirpath.relative_to(root).parts) + 1
+    """层号 = 记忆层级序数：根=第一层；某文件夹的层号 = 根到它的路径上
+    （含根、不含自身）拥有记忆层的祖先数 + 1。分组文件夹（如 platforms、
+    AI_NEWS_MARKETS）自己不建记忆层就不占层号，避免模块层号被分组层级虚增。"""
+    rel = dirpath.relative_to(root)
+    if not rel.parts:
+        return 1  # 根 = 第一层
+    n = 0
+    ancestor = root
+    for part in rel.parts[:-1]:  # 严格祖先（不含自身）
+        ancestor = ancestor / part
+        if any(p.is_dir() and LAYER_NAME_RE.match(p.name) for p in ancestor.iterdir()):
+            n += 1
+    return n + 2  # 1（根层）+ 祖先已占层数 + 1（本层）
 
 
 def tpl_dir() -> Path:
@@ -167,6 +179,8 @@ def cmd_build(args) -> None:
     n = parse_layer(getattr(args, "层"))
     if not n:
         sys.exit("层号非法（用中文数字 一/二/三/四…九十九，或阿拉伯数字 1/2/3/4…99）")
+    if n > 99:
+        sys.exit("层号超范围（最多九十九层；如需更深请与用户讨论是否结构该拆分）")
     if not target.is_dir():
         sys.exit(f"目标文件夹不存在：{target}")
     mem_dir = target / layer_name(n)
@@ -190,7 +204,7 @@ def cmd_build(args) -> None:
     save_index(mem_dir, data)
     print(f"✔ 已就地创建：{mem_dir}\\（含 0_索引 + 6 件格式参考 + {INDEX_NAME}）")
     print("  ⚠ 请按 SKILL.md 深度理解该层内容 + 融合对话经验后填写，不是留空。")
-    print("  ⚠ 层号应与目录深度一致（根=一，向下一级+1）；层数与各层职责请记入根记忆层 0_索引 的「分层方案」。")
+    print("  ⚠ 层号应与记忆层级序数一致（根=一；分组文件夹不建层就不占层号）；层数与各层职责请记入根记忆层 0_索引 的「分层方案」。")
 
 
 # ---------- 扫描 ----------
@@ -228,7 +242,7 @@ def cmd_check(args) -> None:
     root = Path(args.workspace).resolve()
     if not root.is_dir():
         sys.exit(f"工作区不存在：{root}")
-    print(f"层级完整性检查 {root} ...（层号=目录深度：根=记忆第一层，向下一级+1）")
+    print(f"层级完整性检查 {root} ...（%s）" % "层号=记忆层级序数（根=一；分组文件夹不建层就不占层号）")
     checked, missing = 0, []
     platforms = root / "platforms"
 
@@ -383,19 +397,19 @@ def _resolve_mem_dir(workspace: str, layer_dir: str) -> Path:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="记忆管家（cross-agent-memory 辅助工具；层号=目录深度，层数 1~99 不限）")
+    ap = argparse.ArgumentParser(description="记忆管家（cross-agent-memory 辅助工具；层号=记忆层级序数，层数 1~99 不限）")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("建层", help="就地创建 记忆第X层（0_索引+6件格式参考）")
     p.add_argument("target", help="要在哪个文件夹里建（就地嵌入）")
-    p.add_argument("--层", required=True, help="层号：中文数字（一/二/三/四…）或阿拉伯数字（1/2/3/4…）；应等于目录深度（根=一）")
+    p.add_argument("--层", required=True, help="层号：中文数字（一/二/三/四…）或阿拉伯数字（1/2/3/4…）；应等于记忆层级序数（根=一）")
     p.set_defaults(fn=cmd_build)
 
     p = sub.add_parser("扫描", help="列出工作区里已有的 记忆第X层（任意层数）")
     p.add_argument("workspace")
     p.set_defaults(fn=cmd_scan)
 
-    p = sub.add_parser("检查", help="层级完整性检查：按目录深度找缺记忆层的候选子模块")
+    p = sub.add_parser("检查", help="层级完整性检查：按记忆层级序数找缺记忆层的候选子模块")
     p.add_argument("workspace")
     p.set_defaults(fn=cmd_check)
 

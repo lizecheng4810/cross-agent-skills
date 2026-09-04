@@ -4,7 +4,7 @@
 临时脚本管家 —— 跨 Agent / 跨 Harness 临时脚本治理主工具（跨平台，Python 3.8+）
 
 命令：
-  配置 [--path <目录>]                     查看/设置本机临时脚本根目录并初始化结构
+  配置 [--path <目录>] [--name <署名>]      查看/设置本机临时脚本根目录/默认署名并初始化结构
   查 <关键词> [--lang py] [--project X]    检索索引找可复用脚本
   登记 <文件> --purpose P [--reuse one-off|reusable] [--project X]
                                            把脚本收编入库（复制或移动）并登记元数据
@@ -44,8 +44,9 @@ FORMAL_NAME_PAT = re.compile(
     r"(setup|install|build|deploy|migrate|main|app|server|client|manage|__init__|conftest|run)",
     re.IGNORECASE,
 )
-AUDIT_SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".idea", ".vscode",
-                   "记忆第一层", "记忆第二层", "记忆第三层"}
+# 记忆层文件夹名：跨 Agent 的就地记忆（层数 1~99 不限），审计一律跳过
+MEM_LAYER_PAT = re.compile(r"^记忆第[一二三四五六七八九十]{1,3}层$")
+AUDIT_SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".idea", ".vscode"}
 
 
 def now_iso():
@@ -57,11 +58,15 @@ def today():
 
 
 def load_json(path):
-    """utf-8-sig 兼容 PowerShell 5 写出的 BOM 文件。"""
+    """utf-8-sig 兼容 PowerShell 5 写出的 BOM 文件；损坏时报错而非裸 traceback。"""
     if not os.path.isfile(path):
         return None
-    with open(path, encoding="utf-8-sig") as f:
-        return json.load(f)
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        sys.exit(f"[错误] {path} 无法解析（{e}）。\n"
+                 f"       文件可能被并发写坏或手工改错：请先备份，与相关 Agent 核对后再手工修复。")
 
 
 def load_config():
@@ -144,6 +149,17 @@ def new_id():
 def ensure_tree(root):
     for d in DIRS:
         os.makedirs(os.path.join(root, d), exist_ok=True)
+
+
+def unique_dest(dest):
+    """目标路径已存在时追加序号，绝不静默覆盖库内已有脚本。"""
+    if not os.path.exists(dest):
+        return dest
+    base, ext = os.path.splitext(dest)
+    n = 2
+    while os.path.exists(f"{base}__{n}{ext}"):
+        n += 1
+    return f"{base}__{n}{ext}"
 
 
 def project_dir(root, zone, project):
@@ -237,6 +253,8 @@ def _register(root, src, zone, purpose, reuse, project, created_by, move=False, 
     dest_dir = project_dir(root, zone, project)
     dest = os.path.join(dest_dir, os.path.basename(src))
     same_place = os.path.abspath(src) == os.path.abspath(dest)
+    if not same_place:
+        dest = unique_dest(dest)
     if move and not same_place:
         shutil.move(src, dest)
     elif not same_place:
@@ -305,6 +323,7 @@ def cmd_move(args):
     dest_dir = project_dir(root, args.to, args.project)
     dest = os.path.join(dest_dir, os.path.basename(args.file))
     if src_abs != os.path.abspath(dest):
+        dest = unique_dest(dest)
         shutil.move(src_abs, dest)
     dest_rel = os.path.relpath(dest, root).replace("\\", "/")
 
@@ -366,7 +385,12 @@ def cmd_restore(args):
     origin = entry.get("origin_path")
     if not origin or not os.path.isdir(os.path.dirname(origin)):
         sys.exit(f"[错误] 原路径不可用：{origin}。请手工指定恢复位置。")
+    if os.path.exists(origin):
+        sys.exit(f"[错误] 原路径已有同名文件（可能是用户后来新建/恢复的）：{origin}\n"
+                 f"       绝不覆盖。请先让用户确认，再手工处理。")
     src = os.path.join(root, entry["file"])
+    if not os.path.isfile(src):
+        sys.exit(f"[错误] 库内文件不存在（可能已被清理或手工移动）：{src}")
     shutil.move(src, origin)
     entry["status"] = "active"
     # 库内目标存相对路径（清理等命令正常治理）；库外（如工作区）存绝对路径，清理守卫会跳过
@@ -400,7 +424,8 @@ def cmd_audit(args):
     known = {os.path.basename(s["file"]).lower() for s in idx["scripts"]}
     candidates = []
     for dirpath, dirnames, filenames in os.walk(ws):
-        dirnames[:] = [d for d in dirnames if d not in AUDIT_SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames
+                       if d not in AUDIT_SKIP_DIRS and not MEM_LAYER_PAT.match(d)]
         for fn in filenames:
             ext = os.path.splitext(fn)[1].lower()
             if ext not in SCRIPT_EXTS or fn.lower() in known:
