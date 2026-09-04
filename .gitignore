@@ -1,0 +1,8 @@
+# 打包产物
+*.zip
+# Python
+__pycache__/
+*.pyc
+# 系统文件
+Thumbs.db
+.DS_Store
