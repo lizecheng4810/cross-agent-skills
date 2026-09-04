@@ -3,11 +3,12 @@
 """
 记忆管家 —— cross-agent-memory 的主工具（跨平台，需 Python 3.8+）
 
-说明：判断第1/2/3层、深度阅读并填写记忆文件，由 Agent 按 SKILL.md 自主完成。
-本脚本只做机械操作：
-  建层   就地创建 记忆第X层 文件夹（0_索引 + 6 件格式参考）
-  扫描   列出工作区里已有的 记忆第X层 文件夹
-  检查   层级完整性检查：找出缺 记忆第三层 的候选子模块/子工程文件夹
+说明：判断该分几层（1~N 层，不设上限）、深度阅读并填写记忆文件，由 Agent 按 SKILL.md 自主完成。
+本脚本只做机械操作。**层号约定 = 目录深度**：工作区根 = 第一层，向下一级 = 第二层……以此类推，
+文件夹名形如 记忆第X层（X 为中文数字，一~九十九）。
+  建层   就地创建 记忆第X层 文件夹（0_索引 + 6 件格式参考）；--层 接受中文数字（一/二/三/四…）或阿拉伯数字（1/2/3/4…）
+  扫描   列出工作区里已有的 记忆第X层 文件夹（任意层数）
+  检查   层级完整性检查：按目录深度推断每层应有的 记忆第X层，找出缺失的候选子模块/子工程
   索引   为某层的记忆文件生成/更新指纹档案（记忆索引.json：sha256 + mtime + 更新者）
   校验   对比当前文件与指纹档案，报告被其他 Agent/Harness 改过的文件（并发检测）
   接手   一键接手入口：扫描 + 层级完整性检查 + 各层并发校验 + 临时脚本库配置联动检查
@@ -36,14 +37,76 @@ CORE_FILES = [
     "5_代办.md",
     "6_需要我配合.txt",
 ]
-LAYER_NAMES = {"一": "记忆第一层", "二": "记忆第二层", "三": "记忆第三层"}
-LAYER_RE = re.compile(r"^记忆第[一二三]层$")
-# 检查时跳过的系统/依赖/产物/记忆/通用源码目录（平台名不排除，让它们能作为第3层候选）
+# 支持一~九十九层（任意层数，由 Agent 深度研究项目后自主决定）
+CN_DIGITS = "一二三四五六七八九"
+LAYER_RE = re.compile(r"^记忆第([一二三四五六七八九十]{1,3})层$")
+LAYER_NAME_RE = re.compile(r"^记忆第[一二三四五六七八九十]{1,3}层$")
+# 检查时跳过的系统/依赖/产物/记忆/通用源码目录（平台名不排除，让它们能作为候选）
 SKIP_NAMES = re.compile(
     r"^(node_modules|\.git|__pycache__|\.venv|venv|dist|build|\.idea|\.vscode|release|"
     r"public|src|server|desktop|docs|scripts|assets|test|tests|TMP_|文件备份|已生成|"
-    r"记忆第[一二三]层)$"
+    r"记忆第[一二三四五六七八九十]{1,3}层)$"
 )
+# 判定「独立模块/子工程」的项目标志文件（有其一即视为候选）
+PROJECT_MARKERS = (
+    "README.md", "readme.md", "README.txt", "package.json", "pyproject.toml",
+    "setup.py", "requirements.txt", "Cargo.toml", "pom.xml", "build.gradle",
+    "pubspec.yaml", "CMakeLists.txt", "go.mod", ".git", "composer.json", "*.csproj",
+)
+MAX_CHECK_DEPTH = 3  # 检查时向下递归的层数（相对工作区根）；更深处对其单独执行 检查
+
+
+def to_cn(n: int) -> str:
+    """1~99 → 中文数字（一/十/十四/二十/九十九）。"""
+    if not 1 <= n <= 99:
+        raise ValueError(f"层号超范围（1~99）：{n}")
+    if n < 10:
+        return CN_DIGITS[n - 1]
+    if n == 10:
+        return "十"
+    ten, ones = divmod(n, 10)
+    return (CN_DIGITS[ten - 1] + "十" if ten > 1 else "十") + (CN_DIGITS[ones - 1] if ones else "")
+
+
+def cn_to_int(s: str):
+    """中文数字（一~九十九）→ int；解析失败返回 None。"""
+    if not s:
+        return None
+    if s == "十":
+        return 10
+    ten = ones = 0
+    if "十" in s:
+        head, _, tail = s.partition("十")
+        if head:
+            i = CN_DIGITS.find(head)
+            if i < 0:
+                return None
+            ten = i + 1
+        if tail:
+            i = CN_DIGITS.find(tail)
+            if i < 0:
+                return None
+            ones = i + 1
+        return ten * 10 + ones
+    i = CN_DIGITS.find(s)
+    return i + 1 if i >= 0 else None
+
+
+def parse_layer(s: str):
+    """--层 参数：中文数字（四）或阿拉伯数字（4）→ int。"""
+    s = str(s).strip()
+    if s.isdigit():
+        return int(s)
+    return cn_to_int(s)
+
+
+def layer_name(n: int) -> str:
+    return f"记忆第{to_cn(n)}层"
+
+
+def expected_layer_depth(dirpath: Path, root: Path) -> int:
+    """目录深度 → 应建层号：根=第一层，向下一级=第二层……"""
+    return len(dirpath.relative_to(root).parts) + 1
 
 
 def tpl_dir() -> Path:
@@ -101,12 +164,12 @@ def save_index(mem_dir: Path, data: dict) -> None:
 # ---------- 建层 ----------
 def cmd_build(args) -> None:
     target = Path(args.target).resolve()
-    layer = LAYER_NAMES.get(getattr(args, "层"))
-    if not layer:
-        sys.exit(f"层名非法（用 一/二/三，对应 记忆第一层/第二层/第三层）")
+    n = parse_layer(getattr(args, "层"))
+    if not n:
+        sys.exit("层号非法（用中文数字 一/二/三/四…九十九，或阿拉伯数字 1/2/3/4…99）")
     if not target.is_dir():
         sys.exit(f"目标文件夹不存在：{target}")
-    mem_dir = target / layer
+    mem_dir = target / layer_name(n)
     if mem_dir.exists():
         sys.exit(f"该文件夹下已有记忆文件夹：{mem_dir}（如需更新，直接编辑里面的文件）")
     mem_dir.mkdir(parents=True)
@@ -127,6 +190,7 @@ def cmd_build(args) -> None:
     save_index(mem_dir, data)
     print(f"✔ 已就地创建：{mem_dir}\\（含 0_索引 + 6 件格式参考 + {INDEX_NAME}）")
     print("  ⚠ 请按 SKILL.md 深度理解该层内容 + 融合对话经验后填写，不是留空。")
+    print("  ⚠ 层号应与目录深度一致（根=一，向下一级+1）；层数与各层职责请记入根记忆层 0_索引 的「分层方案」。")
 
 
 # ---------- 扫描 ----------
@@ -134,41 +198,73 @@ def cmd_scan(args) -> None:
     root = Path(args.workspace).resolve()
     if not root.is_dir():
         sys.exit(f"工作区不存在：{root}")
-    hits = sorted(p for p in root.rglob("*") if p.is_dir() and LAYER_RE.match(p.name))
-    print(f"扫描 {root} 下的记忆文件夹：")
+    hits = sorted(p for p in root.rglob("*") if p.is_dir() and LAYER_NAME_RE.match(p.name))
+    print(f"扫描 {root} 下的记忆文件夹（共 {len(hits)} 个）：")
     if not hits:
         print("  （未找到 记忆第X层，可用 建层 命令就地创建）")
     for h in hits:
-        print(f"  ✓ {h}")
+        exp = expected_layer_depth(h.parent, root)
+        mark = "✓" if to_cn(exp) == LAYER_RE.match(h.name).group(1) else "⚠层号与深度不符"
+        print(f"  {mark} {h}")
 
 
 # ---------- 层级完整性检查 ----------
+def has_layer(d: Path) -> bool:
+    return any(p.is_dir() and LAYER_NAME_RE.match(p.name) for p in d.iterdir())
+
+
+def is_project_candidate(d: Path) -> bool:
+    names = {p.name for p in d.iterdir()}
+    for marker in PROJECT_MARKERS:
+        if marker.startswith("*."):
+            if any(n.endswith(marker[1:]) for n in names):
+                return True
+        elif marker in names:
+            return True
+    return False
+
+
 def cmd_check(args) -> None:
     root = Path(args.workspace).resolve()
     if not root.is_dir():
         sys.exit(f"工作区不存在：{root}")
-    print(f"层级完整性检查 {root} ...")
-    candidates = [
-        d for d in root.iterdir()
-        if d.is_dir() and not SKIP_NAMES.match(d.name) and d.name != "platforms"
-    ]
+    print(f"层级完整性检查 {root} ...（层号=目录深度：根=记忆第一层，向下一级+1）")
+    checked, missing = 0, []
     platforms = root / "platforms"
-    if platforms.is_dir():
-        candidates += [d for d in platforms.iterdir() if d.is_dir()]
-    missing = []
-    for cand in candidates:
-        if (cand / "记忆第二层").is_dir():   # 已是第2层工程，不算第3层候选
-            continue
-        if not (cand / "记忆第三层").is_dir():
-            missing.append(cand)
-    print(f"  已检查 {len(candidates)} 个候选子模块/子工程（含 platforms 下各平台）。")
+
+    def walk(d: Path, depth: int, forced: bool):
+        nonlocal checked
+        if depth > MAX_CHECK_DEPTH:
+            return
+        checked += 1
+        exp = expected_layer_depth(d, root)
+        if has_layer(d):
+            pass  # 本层已建记忆，继续看下层
+        elif forced or depth == 1 or is_project_candidate(d):
+            missing.append((d, exp))
+        # 向下递归：跳过系统/依赖/产物目录；platforms 的直接子目录视为强制候选
+        if depth < MAX_CHECK_DEPTH:
+            for child in sorted(d.iterdir()):
+                if not child.is_dir():
+                    continue
+                if SKIP_NAMES.match(child.name):
+                    continue
+                walk(child, depth + 1, forced=(child.parent.name == "platforms"))
+
+    walk(root, 0, forced=True)
+    # 根自身（第一层）单独提示
+    root_missing = not has_layer(root)
+    print(f"  已检查 {checked} 个目录（含根，向下最多 {MAX_CHECK_DEPTH} 级；platforms 下各平台强制候选）。")
+    if root_missing:
+        print("  ⚠ 工作区根缺少 记忆第一层。")
     if missing:
-        print("  ⚠ 以下候选文件夹缺少 记忆第三层（应主动补齐，不等用户提醒）：")
-        for m in missing:
-            print(f"    ✗ {m}")
+        print("  ⚠ 以下候选文件夹缺少对应层号的记忆文件夹（应主动补齐，不等用户提醒）：")
+        for d, exp in missing:
+            print(f"    ✗ {d}  ← 应建 {layer_name(exp)}")
     else:
-        print("  ✓ 未发现缺 记忆第三层 的候选子模块文件夹。")
-    print("  说明：覆盖「一级子目录 + platforms 下各平台」；更深层模块请对其单独执行 检查。")
+        print("  ✓ 未发现缺记忆层的候选子模块文件夹。")
+    print("  说明：候选判定 = 一级子目录，或有项目标志文件（README/package.json/.git 等）的目录，或 platforms 下各平台。")
+    print("        更深处模块请对其单独执行 检查；层号是否合适最终由 Agent 按分层方案判断。")
 
 
 # ---------- 索引（生成/更新指纹档案） ----------
@@ -241,13 +337,15 @@ def cmd_takeover(args) -> None:
     by = args.by or local_agent_name()
     print(f"=== 接手检查 {root} ===")
 
-    # 1) 已有哪些记忆层
-    hits = sorted(p for p in root.rglob("*") if p.is_dir() and LAYER_RE.match(p.name))
+    # 1) 已有哪些记忆层（任意层数）
+    hits = sorted(p for p in root.rglob("*") if p.is_dir() and LAYER_NAME_RE.match(p.name))
     print(f"\n[1] 已有记忆层 {len(hits)} 个：")
     for h in hits:
-        print(f"  ✓ {h}")
+        exp = expected_layer_depth(h.parent, root)
+        mark = "✓" if to_cn(exp) == LAYER_RE.match(h.name).group(1) else "⚠层号与深度不符"
+        print(f"  {mark} {h}")
 
-    # 2) 层级完整性检查（缺第3层的候选子模块）
+    # 2) 层级完整性检查（缺对应层号记忆层的候选子模块）
     print()
     cmd_check(argparse.Namespace(workspace=str(root)))
 
@@ -268,7 +366,7 @@ def cmd_takeover(args) -> None:
             print("  ⚠ 按协议必须先询问用户库路径，绝不擅自选路径、绝不静默回退到工作区。")
     except Exception:
         print("  本机配置不可读（未配置）。按协议先询问用户临时脚本库路径。")
-    print("\n后续：有记忆→深读各件再动手；缺层→建层+深度填写；无记忆→深读整个项目。")
+    print("\n后续：有记忆→深读各件再动手（先看根记忆层 0_索引 的「分层方案」）；缺层→建层+深度填写；无记忆→深读整个项目后自主定层数（1~N 层，不设上限）。")
 
 
 def _resolve_mem_dir(workspace: str, layer_dir: str) -> Path:
@@ -279,31 +377,31 @@ def _resolve_mem_dir(workspace: str, layer_dir: str) -> Path:
         mem = Path(workspace).resolve() if workspace else None
         if mem is None:
             sys.exit("请用 --层 <记忆第X层> 或直接给 <记忆文件夹路径>")
-    if not mem.is_dir() or not LAYER_RE.match(mem.name):
+    if not mem.is_dir() or not LAYER_NAME_RE.match(mem.name):
         sys.exit(f"不是合法的 记忆第X层 文件夹：{mem}")
     return mem
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="记忆管家（cross-agent-memory 辅助工具）")
+    ap = argparse.ArgumentParser(description="记忆管家（cross-agent-memory 辅助工具；层号=目录深度，层数 1~99 不限）")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("建层", help="就地创建 记忆第X层（0_索引+6件格式参考）")
     p.add_argument("target", help="要在哪个文件夹里建（就地嵌入）")
-    p.add_argument("--层", choices=list(LAYER_NAMES), required=True, help="一/二/三")
+    p.add_argument("--层", required=True, help="层号：中文数字（一/二/三/四…）或阿拉伯数字（1/2/3/4…）；应等于目录深度（根=一）")
     p.set_defaults(fn=cmd_build)
 
-    p = sub.add_parser("扫描", help="列出工作区里已有的 记忆第X层")
+    p = sub.add_parser("扫描", help="列出工作区里已有的 记忆第X层（任意层数）")
     p.add_argument("workspace")
     p.set_defaults(fn=cmd_scan)
 
-    p = sub.add_parser("检查", help="层级完整性检查：找出缺 记忆第三层 的候选子模块")
+    p = sub.add_parser("检查", help="层级完整性检查：按目录深度找缺记忆层的候选子模块")
     p.add_argument("workspace")
     p.set_defaults(fn=cmd_check)
 
     p = sub.add_parser("索引", help="为某层记忆文件生成/更新指纹档案（记忆索引.json）")
     p.add_argument("workspace", nargs="?", default="", help="所在工作区/父文件夹")
-    p.add_argument("--层", dest="layer_dir", default="", help="记忆第一层/记忆第二层/记忆第三层")
+    p.add_argument("--层", dest="layer_dir", default="", help="记忆第X层（如 记忆第四层）")
     p.add_argument("--by", default="", help="更新者署名（agent/harness 名）")
     p.set_defaults(fn=cmd_index)
 
