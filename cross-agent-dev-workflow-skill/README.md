@@ -40,7 +40,7 @@
 
 ## 安装
 
-见 [安装指引.md](安装指引.md)——标准 SKILL.md 格式，ZCode / Codex CLI / Cursor / Claude Code 等任何支持 skills 的工具都能加载。
+见 [安装指引.md](安装指引.md)——标准 SKILL.md 格式，ZCode / Codex CLI / Cursor / Claude Code 等任何支持 skills 的工具都能加载；也可从[套件 Release](https://github.com/lizecheng4810/cross-agent-skills/releases) 下载 zip 解压获得本文件夹。
 
 ## License
 
