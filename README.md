@@ -40,7 +40,7 @@
 
 ## 安装
 
-各技能目录内有 `安装指引.md`；把对应文件夹拷入目标 harness 的 skills 目录即可（如 ZCode：`~/.zcode/skills/`，Claude Code：`~/.claude/skills/`）。**建议三件套整装**。
+各技能目录内有 `安装指引.md`；把对应文件夹拷入目标 harness 的 skills 目录即可（如 ZCode：`~/.zcode/skills/`，Claude Code：`~/.claude/skills/`），或直接下载 [Release](https://github.com/lizecheng4810/cross-agent-skills/releases) 中的对应 zip 解压即得技能文件夹。**建议三件套整装**。
 
 ## 环境要求
 
