@@ -1,6 +1,10 @@
 ---
 name: cross-agent-scratchpad-skill
 description: 跨 Agent / 跨 Harness 的临时脚本全生命周期治理技能。解决临时脚本污染工程环境、越积越多、无法区分复用价值的问题。强制协议：①接手任务先读本机配置取得用户指定的外部临时脚本库路径（未配置必须先询问用户，绝不擅自选路径、绝不静默回退到工作区）；②创建任何临时脚本前先检索外部库复用，没有才新建，且必须建在外部库，不落在项目工作区；③首次接手工作区做遗留物审计：识别 Agent 遗留的临时脚本（有复用价值→迁入外部库，无价值→删除）、来源不明文件→只隔离+报告+等用户确认，绝不擅自删除真实工程文件；④任务结束时按元数据处置本次脚本（可复用→reusable/，一次性→删，判断不准→quarantine/）；⑤所有判断、偏好、索引、决策深度写入 cross-agent-memory 分层记忆。使用时机：在任何工作区开始/接手/执行/收尾任务、需要创建临时脚本时。
+license: MIT
+metadata:
+  version: "1.1.0"
+  suite: cross-agent-skills
 ---
 
 # 跨 Agent / 跨 Harness 临时脚本治理技能
@@ -17,7 +21,7 @@ description: 跨 Agent / 跨 Harness 的临时脚本全生命周期治理技能�
 | `cross-agent-memory` | 理解项目、沉淀知识（读什么、为什么、踩过什么坑） |
 | 本技能 | 治理临时脚本（建在哪、能不能复用、何时删、迁到哪） |
 
-两者共用同一个「接手任务入口」，联动细节见 `联动/cross-agent-memory.md`。
+三位一体（memory · scratchpad · dev-workflow）共用同一个「接手任务入口」，联动细节见 `联动/cross-agent-memory.md` 与 `联动/cross-agent-dev-workflow.md`。
 
 ---
 
@@ -29,7 +33,7 @@ description: 跨 Agent / 跨 Harness 的临时脚本全生命周期治理技能�
    - **已配置** → 验证路径仍存在可写；不可达（外接盘缺失/网络盘断开）→ **停下来请求用户重新指定，绝不静默回退到工作区**。
    - **未配置** → **必须先询问用户**：「本设备的临时脚本统一存放位置在哪里？」拿到路径后写入本机配置（用工具 `配置` 命令，或手工写入），**绝不擅自替用户选路径**。
 2. **读项目记忆**：按 cross-agent-memory 协议读 `记忆第X层`。记忆中若标记「本工作区已完成遗留物审计（日期）」→ 跳过全量审计，只看增量；否则先完成节点 1。
-   > 工具捷径：`python 记忆管家.py 接手 <工作区>` 一条命令完成「扫描记忆层 + 层级完整性检查 + 各层并发校验 + 本机配置联动检查」，两技能共用的接手第一步。
+   > 工具捷径：`python 记忆管家.py 接手 <工作区>` 一条命令完成「记忆_通用 检查 + 扫描记忆层 + 层级完整性检查 + 各层并发校验 + 本机配置联动检查」，三技能（含 cross-agent-dev-workflow 的阶段0）共用的接手第一步。
 
 ### 节点 1：首次接手工作区——遗留物审计
 
@@ -112,7 +116,7 @@ description: 跨 Agent / 跨 Harness 的临时脚本全生命周期治理技能�
 |---|---|
 | `配置 [--path <目录>] [--name <署名>]` | 查看/设置本机临时脚本根目录（写入 `~/.agent-tsg/config.json`）并初始化目录结构；`--name` 设置默认署名 `agent_name`（记忆管家/临时脚本管家共用，登记/迁移留痕一致） |
 | `查 <关键词> [--lang py] [--project X]` | 检索索引找可复用脚本 |
-| `登记 <文件> --purpose ... [--reuse one-off] [--project X]` | 把脚本收编入库并登记元数据（`--by` 省略时自动取本机配置 `agent_name`） |
+| `登记 <文件> --purpose ... [--reuse one-off] [--move] [--project X]` | 把脚本收编入库并登记元数据（`--move` 移动入库，默认复制；`--by` 省略时自动取本机配置 `agent_name`） |
 | `审计 <工作区>` | 启发式扫描工作区内的疑似临时脚本，输出候选清单 |
 | `迁移 <文件> --to reusable\|sessions\|quarantine [--project X]` | 移动脚本入库并更新索引（quarantine 记录原路径，可回迁） |
 | `使用 <文件或id> [--note N]` | 标记脚本被复用过（使用次数+1，更新最后使用时间） |
@@ -129,6 +133,8 @@ description: 跨 Agent / 跨 Harness 的临时脚本全生命周期治理技能�
 ---
 
 ## 四、与 cross-agent-memory 的联动约定（必读 `联动/cross-agent-memory.md`）
+
+与 `cross-agent-memory`、`cross-agent-dev-workflow-skill`（项目交付总流程）**三位一体**：dev-workflow 掌舵（研发→测纠→整理发布三阶段 + 证据制验收门 + 停止闸），其研发/测纠阶段的临时脚本治理、发布阶段的遗留物处置**全部委托本技能的分级协议**（含删除红线）。联动细节见 `联动/cross-agent-dev-workflow.md`。
 
 速记版：
 

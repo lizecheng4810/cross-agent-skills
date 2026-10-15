@@ -44,8 +44,9 @@ FORMAL_NAME_PAT = re.compile(
     r"(setup|install|build|deploy|migrate|main|app|server|client|manage|__init__|conftest|run)",
     re.IGNORECASE,
 )
-# 记忆层文件夹名：跨 Agent 的就地记忆（层数 1~99 不限），审计一律跳过
+# 记忆层文件夹名：跨 Agent 的就地记忆（层数 1~99 不限），审计一律跳过；记忆_通用 同理
 MEM_LAYER_PAT = re.compile(r"^记忆第[一二三四五六七八九十]{1,3}层$")
+MEM_UNIVERSAL_PAT = re.compile(r"^记忆_通用$")
 AUDIT_SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".idea", ".vscode"}
 
 
@@ -247,9 +248,11 @@ def cmd_find(args):
 
 
 def _register(root, src, zone, purpose, reuse, project, created_by, move=False, origin_path=None):
-    """收编一个脚本入库并登记。返回 entry。目标已有同路径条目时更新而非重复登记。"""
+    """收编一个脚本入库并登记。返回 entry。目标已有同路径条目时更新而非重复登记；
+    内容与库内其他脚本相同（同 sha256）时先提示复用，仍继续登记。"""
     if not os.path.isfile(src):
         sys.exit(f"[错误] 文件不存在：{src}")
+    src_hash = "sha256:" + file_hash(src)
     dest_dir = project_dir(root, zone, project)
     dest = os.path.join(dest_dir, os.path.basename(src))
     same_place = os.path.abspath(src) == os.path.abspath(dest)
@@ -263,6 +266,12 @@ def _register(root, src, zone, purpose, reuse, project, created_by, move=False, 
     idx = load_index(root)
     dest_rel = os.path.relpath(dest, root).replace("\\", "/")
     old = next((s for s in idx["scripts"] if s.get("file", "").lower() == dest_rel.lower()), None)
+    dup = next((s for s in idx["scripts"]
+                if s.get("content_hash") == src_hash
+                and s.get("status") not in ("deleted",)
+                and s.get("file", "").lower() != dest_rel.lower()), None)
+    if dup:
+        print(f"[查重] ⚠ 库内已有同内容脚本：{dup['file']} (id={dup['id']})——先考虑直接复用（`使用` 命令标记）；仍按登记继续。")
     if old and old.get("status") not in ("deleted", "moved"):
         changed = False
         if purpose and purpose != old.get("purpose"):
@@ -425,7 +434,9 @@ def cmd_audit(args):
     candidates = []
     for dirpath, dirnames, filenames in os.walk(ws):
         dirnames[:] = [d for d in dirnames
-                       if d not in AUDIT_SKIP_DIRS and not MEM_LAYER_PAT.match(d)]
+                       if d not in AUDIT_SKIP_DIRS
+                       and not MEM_LAYER_PAT.match(d)
+                       and not MEM_UNIVERSAL_PAT.match(d)]
         for fn in filenames:
             ext = os.path.splitext(fn)[1].lower()
             if ext not in SCRIPT_EXTS or fn.lower() in known:

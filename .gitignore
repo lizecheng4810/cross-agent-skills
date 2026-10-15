@@ -6,3 +6,7 @@ __pycache__/
 # 系统文件
 Thumbs.db
 .DS_Store
+# 本地协作记忆（随文件夹拷贝迁移，不随公开仓库分发；锚定仓库根，
+# 以免误伤 cross-agent-memory-skill/_模板/ 下的同名制品模板）
+/记忆第一层/
+/记忆_通用/

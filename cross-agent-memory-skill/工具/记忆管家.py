@@ -8,11 +8,14 @@
 根到它的路径上拥有记忆层的祖先数 + 1（分组文件夹如 platforms 不建层就不占层号）。
 文件夹名形如 记忆第X层（X 为中文数字，一~九十九）。
   建层   就地创建 记忆第X层 文件夹（0_索引 + 6 件格式参考）；--层 接受中文数字（一/二/三/四…）或阿拉伯数字（1/2/3/4…）
-  扫描   列出工作区里已有的 记忆第X层 文件夹（任意层数）
+         加 --通用 则在目标文件夹下建中央 记忆_通用/（0_通用索引 + 4 件，任何层都能引用）
+  扫描   列出工作区里已有的 记忆第X层 文件夹（任意层数，含 记忆_通用）
   检查   层级完整性检查：按记忆层级序数推断每处应有的 记忆第X层，找出缺失的候选子模块/子工程
   索引   为某层的记忆文件生成/更新指纹档案（记忆索引.json：sha256 + mtime + 更新者）
   校验   对比当前文件与指纹档案，报告被其他 Agent/Harness 改过的文件（并发检测）
-  接手   一键接手入口：扫描 + 层级完整性检查 + 各层并发校验 + 临时脚本库配置联动检查
+  刷新通用 重建所有 记忆第X层/0_索引.md 的「🔗 通用知识」段（保留已有摘要，补新文件、删失效引用）
+  检索   跨全部记忆层与 记忆_通用 全文检索关键词，输出 文件:行号:内容
+  接手   一键接手入口：记忆_通用 检查 + 扫描 + 层级完整性检查 + 各层并发校验 + 交付流程状态 + 临时脚本库配置联动检查
   帮助   显示本说明
 
 记忆索引.json 存放于各 记忆第X层 文件夹内，随工作区走。
@@ -27,6 +30,22 @@ import sys
 from pathlib import Path
 
 INDEX_NAME = "记忆索引.json"
+UNIVERSAL_DIR = "记忆_通用"  # 中央跨层通用知识（不在任何 记忆第X层 内，与它们平级）
+UNIVERSAL_FILES = [
+    "0_通用索引.md",
+    "1_通用偏好.md",
+    "2_通用配方.md",
+    "3_通用工具.md",
+    "4_通用踩坑.md",
+]
+UNIVERSAL_LABELS = {  # 「🔗 通用知识」段里每个文件的展示名
+    "1_通用偏好.md": "通用偏好",
+    "2_通用配方.md": "通用配方",
+    "3_通用工具.md": "通用工具",
+    "4_通用踩坑.md": "通用踩坑",
+}
+# 「🔗 通用知识」段定位：标题行到下一个二级标题之间
+UNIVERSAL_SECTION_RE = re.compile(r"(## 🔗 通用知识[^\n]*\n)(.*?)(?=\n## |\Z)", re.S)
 # 本机配置（与 cross-agent-scratchpad-skill 共享同一份，设备级事实不放工作区记忆）
 LOCAL_CONFIG = Path.home() / ".agent-tsg" / "config.json"
 CORE_FILES = [
@@ -46,7 +65,7 @@ LAYER_NAME_RE = re.compile(r"^记忆第[一二三四五六七八九十]{1,3}层$
 SKIP_NAMES = re.compile(
     r"^(node_modules|\.git|__pycache__|\.venv|venv|dist|build|\.idea|\.vscode|release|"
     r"public|src|server|desktop|docs|scripts|assets|test|tests|TMP_|文件备份|已生成|"
-    r"记忆第[一二三四五六七八九十]{1,3}层)$"
+    r"记忆第[一二三四五六七八九十]{1,3}层|记忆_通用)$"
 )
 # 判定「独立模块/子工程」的项目标志文件（有其一即视为候选）
 PROJECT_MARKERS = (
@@ -125,6 +144,10 @@ def tpl_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "_模板" / "记忆"
 
 
+def tpl_universal_dir() -> Path:
+    return Path(__file__).resolve().parent.parent / "_模板" / "记忆_通用"
+
+
 def read_text(p: Path) -> str:
     return p.read_text(encoding="utf-8-sig")
 
@@ -157,6 +180,14 @@ def sha256_of(p: Path) -> str:
     return h.hexdigest()
 
 
+def fingerprint_of(p: Path) -> dict:
+    return {
+        "sha256": sha256_of(p),
+        "mtime": datetime.datetime.fromtimestamp(p.stat().st_mtime).isoformat(timespec="seconds"),
+        "bytes": p.stat().st_size,
+    }
+
+
 def load_index(mem_dir: Path) -> dict:
     idx = mem_dir / INDEX_NAME
     if idx.exists():
@@ -173,16 +204,49 @@ def save_index(mem_dir: Path, data: dict) -> None:
     atomic_write_text(mem_dir / INDEX_NAME, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
-# ---------- 建层 ----------
+# ---------- 建层（普通层 或 通用层） ----------
 def cmd_build(args) -> None:
     target = Path(args.target).resolve()
+    if not target.is_dir():
+        sys.exit(f"目标文件夹不存在：{target}")
+    if bool(getattr(args, "通用", False)) and getattr(args, "层", None):
+        sys.exit("--层 和 --通用 不能同时使用；要建普通层只传 --层；要建中央通用只传 --通用。")
+    if not getattr(args, "通用", False) and not getattr(args, "层", None):
+        sys.exit("必须指定 --层 <一/二/…/99> 或 --通用")
+
+    # ===== 分支 A：建中央 记忆_通用 文件夹 =====
+    if getattr(args, "通用", False):
+        mem_dir = target / UNIVERSAL_DIR
+        if mem_dir.exists():
+            sys.exit(f"该文件夹下已有通用文件夹：{mem_dir}（如需更新，直接编辑里面的文件）")
+        mem_dir.mkdir(parents=True)
+        for name in UNIVERSAL_FILES:
+            src = tpl_universal_dir() / name
+            write_text(mem_dir / name, read_text(src) if src.exists() else f"# {name}\n")
+        data = load_index(mem_dir)
+        files = data.setdefault("files", {})
+        for name in UNIVERSAL_FILES:
+            p = mem_dir / name
+            if p.is_file():
+                files[name] = {
+                    "sha256": sha256_of(p),
+                    "mtime": datetime.datetime.fromtimestamp(p.stat().st_mtime).isoformat(timespec="seconds"),
+                    "bytes": p.stat().st_size,
+                }
+        save_index(mem_dir, data)
+        print(f"✔ 已就地创建通用记忆文件夹：{mem_dir}\\")
+        print(f"  含：{' + '.join(UNIVERSAL_FILES)} + {INDEX_NAME}")
+        print(f"  ⚠ 这是中央跨层通用知识，**任何** 记忆第X层 都能通过 0_索引.md 的「🔗 通用知识」段引用。")
+        print(f"  ⚠ 用户说\"这是通用的\"时，Agent 应写入这里并刷新所有 记忆第X层 的 0_索引。")
+        print(f"  ⚠ 路径用 <工作区>/xxx 占位，不要写死机器专属绝对路径。")
+        return
+
+    # ===== 分支 B：建普通的 记忆第X 层 =====
     n = parse_layer(getattr(args, "层"))
     if not n:
         sys.exit("层号非法（用中文数字 一/二/三/四…九十九，或阿拉伯数字 1/2/3/4…99）")
     if n > 99:
         sys.exit("层号超范围（最多九十九层；如需更深请与用户讨论是否结构该拆分）")
-    if not target.is_dir():
-        sys.exit(f"目标文件夹不存在：{target}")
     mem_dir = target / layer_name(n)
     if mem_dir.exists():
         sys.exit(f"该文件夹下已有记忆文件夹：{mem_dir}（如需更新，直接编辑里面的文件）")
@@ -205,6 +269,16 @@ def cmd_build(args) -> None:
     print(f"✔ 已就地创建：{mem_dir}\\（含 0_索引 + 6 件格式参考 + {INDEX_NAME}）")
     print("  ⚠ 请按 SKILL.md 深度理解该层内容 + 融合对话经验后填写，不是留空。")
     print("  ⚠ 层号应与记忆层级序数一致（根=一；分组文件夹不建层就不占层号）；层数与各层职责请记入根记忆层 0_索引 的「分层方案」。")
+    # 顺手提示：如工作区已有 记忆_通用，0_索引 模板已含「🔗 通用知识」段可自动引用
+    uni = target / UNIVERSAL_DIR if (target / UNIVERSAL_DIR).is_dir() else None
+    if uni is None:
+        for ancestor in target.parents:
+            if (ancestor / UNIVERSAL_DIR).is_dir():
+                uni = ancestor / UNIVERSAL_DIR
+                break
+    if uni is None:
+        print(f"  💡 工作区尚未建 {UNIVERSAL_DIR}（跨层通用知识），用户首次提到「通用」时跑：")
+        print(f"     python 工具\\记忆管家.py 建层 <工作区> --通用")
 
 
 # ---------- 扫描 ----------
@@ -213,9 +287,12 @@ def cmd_scan(args) -> None:
     if not root.is_dir():
         sys.exit(f"工作区不存在：{root}")
     hits = sorted(p for p in root.rglob("*") if p.is_dir() and LAYER_NAME_RE.match(p.name))
-    print(f"扫描 {root} 下的记忆文件夹（共 {len(hits)} 个）：")
-    if not hits:
-        print("  （未找到 记忆第X层，可用 建层 命令就地创建）")
+    universal_hits = sorted(p for p in root.iterdir() if p.is_dir() and p.name == UNIVERSAL_DIR)
+    print(f"扫描 {root} 下的记忆文件夹（共 {len(hits)} 层，另 记忆_通用 {len(universal_hits)} 个）：")
+    if not hits and not universal_hits:
+        print("  （未找到 记忆第X层 或 记忆_通用，可用 建层 命令就地创建）")
+    for u in universal_hits:
+        print(f"  ✓ 通用  {u}")
     for h in hits:
         exp = expected_layer_depth(h.parent, root)
         mark = "✓" if to_cn(exp) == LAYER_RE.match(h.name).group(1) else "⚠层号与深度不符"
@@ -281,13 +358,18 @@ def cmd_check(args) -> None:
     print("        更深处模块请对其单独执行 检查；层号是否合适最终由 Agent 按分层方案判断。")
 
 
+def _files_of(mem_dir: Path):
+    """该记忆文件夹应维护指纹的文件清单：普通层 = 0_索引+6件；通用层 = 5 件通用模板。"""
+    return UNIVERSAL_FILES if mem_dir.name == UNIVERSAL_DIR else CORE_FILES
+
+
 # ---------- 索引（生成/更新指纹档案） ----------
 def cmd_index(args) -> None:
     mem_dir = _resolve_mem_dir(args.workspace, args.layer_dir)
     data = load_index(mem_dir)
     files = data.setdefault("files", {})
     n = 0
-    for name in CORE_FILES + [INDEX_NAME]:
+    for name in _files_of(mem_dir) + [INDEX_NAME]:
         p = mem_dir / name
         if not p.is_file():
             continue
@@ -314,7 +396,7 @@ def cmd_verify(args) -> None:
         print(f"（{mem_dir} 尚无指纹档案，请先执行 索引）")
         return
     changed, new, gone = [], [], []
-    for name in CORE_FILES:
+    for name in _files_of(mem_dir):
         p = mem_dir / name
         rec = files.get(name)
         if not p.is_file():
@@ -341,6 +423,95 @@ def cmd_verify(args) -> None:
         print("  ✔ 指纹档案已刷新（--refresh）。")
 
 
+# ---------- 刷新通用（重建所有层的「🔗 通用知识」段） ----------
+def _build_universal_section(old_body: str) -> str:
+    """按当前 记忆_通用/ 重建段落；旧段落里已填写的摘要尽量保留。"""
+    keep = {}
+    for line in (old_body or "").splitlines():
+        m = re.match(r"^- (.+?)：(.+?) → ", line.strip())
+        if m:
+            keep[m.group(1)] = m.group(2)
+    lines = [
+        "## 🔗 通用知识（来自 `<工作区>/记忆_通用/`，任何层都能调用）",
+        "> **路径约定**：用 `<工作区>` 占位，不写死机器专属绝对路径（换电脑复制 AI 文件夹时路径会变）。",
+    ]
+    for fn, label in UNIVERSAL_LABELS.items():
+        summary = keep.get(label, "[摘要]")
+        lines.append(f"- {label}：{summary} → `<工作区>/记忆_通用/{fn}`")
+    lines.append("- 完整索引 → `<工作区>/记忆_通用/0_通用索引.md`")
+    lines.append('- （用户说"这是通用的"时，Agent 写到 `<工作区>/记忆_通用/` 并刷新所有层本段；可跑 `刷新通用` 一键完成）')
+    return "\n".join(lines) + "\n"
+
+
+def cmd_refresh_universal(args) -> None:
+    root = Path(args.workspace).resolve()
+    if not root.is_dir():
+        sys.exit(f"工作区不存在：{root}")
+    if not (root / UNIVERSAL_DIR).is_dir():
+        sys.exit(f"工作区还没有 {UNIVERSAL_DIR}（先跑：python 工具\\记忆管家.py 建层 <工作区> --通用）")
+    hits = sorted(p for p in root.rglob("*") if p.is_dir() and LAYER_NAME_RE.match(p.name))
+    if not hits:
+        print("（工作区没有任何 记忆第X层，无需刷新）")
+        return
+    by = args.by or local_agent_name()
+    changed = 0
+    for layer_dir in hits:
+        idx_file = layer_dir / "0_索引.md"
+        if not idx_file.is_file():
+            print(f"  ⚠ {layer_dir.name} 缺 0_索引.md，跳过")
+            continue
+        text = read_text(idx_file)
+        m = UNIVERSAL_SECTION_RE.search(text)
+        new_sec = _build_universal_section(m.group(2) if m else "")
+        if m:
+            new_text = UNIVERSAL_SECTION_RE.sub(lambda _: new_sec, text, count=1)
+        elif re.search(r"^## 更新日志", text, re.M):
+            new_text = text.replace("## 更新日志", new_sec + "\n## 更新日志", 1)
+        else:
+            new_text = text.rstrip("\n") + "\n\n" + new_sec
+        if new_text == text:
+            print(f"  = 已一致 {idx_file}")
+            continue
+        write_text(idx_file, new_text)
+        data = load_index(layer_dir)
+        data.setdefault("files", {})[idx_file.name] = fingerprint_of(idx_file)
+        if by:
+            data["_last_updated_by"] = by
+        save_index(layer_dir, data)
+        changed += 1
+        print(f"  ✔ 已刷新 {idx_file}")
+    print(f"完成：{changed}/{len(hits)} 层的「🔗 通用知识」段已对齐当前 记忆_通用/（其余已一致）。")
+
+
+# ---------- 检索（跨全部记忆层 + 记忆_通用 全文检索） ----------
+def cmd_search(args) -> None:
+    root = Path(args.workspace).resolve()
+    if not root.is_dir():
+        sys.exit(f"工作区不存在：{root}")
+    kw = args.keyword
+    total = 0
+    for p in sorted(root.rglob("*")):
+        if not p.is_file() or p.name == INDEX_NAME:
+            continue
+        rel = p.relative_to(root)
+        in_memory = rel.parts[0] == UNIVERSAL_DIR or any(LAYER_NAME_RE.match(part) for part in rel.parts)
+        if not in_memory or p.suffix.lower() not in (".md", ".txt"):
+            continue
+        try:
+            lines = read_text(p).splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        shown = 0
+        for i, line in enumerate(lines, 1):
+            if kw in line:
+                print(f"{rel.as_posix()}:{i}: {line.strip()[:80]}")
+                total += 1
+                shown += 1
+                if shown >= 5:
+                    break
+    print(f"检索完成：命中 {total} 行（每文件最多显示 5 行；细节请打开对应记忆文件）。")
+
+
 # ---------- 接手（一键入口：扫描 + 层级完整性检查 + 各层并发校验） ----------
 def cmd_takeover(args) -> None:
     """把两技能共用的「接手任务第一步」工具化：一次跑完 扫描/检查/校验，
@@ -351,8 +522,18 @@ def cmd_takeover(args) -> None:
     by = args.by or local_agent_name()
     print(f"=== 接手检查 {root} ===")
 
+    # 0) 通用记忆文件夹（记忆_通用）
+    print("\n[0] 通用记忆文件夹（记忆_通用）：")
+    universal_hits = sorted(p for p in root.iterdir() if p.is_dir() and p.name == UNIVERSAL_DIR)
+    if universal_hits:
+        for u in universal_hits:
+            print(f"  ✓ 已建：{u}")
+    else:
+        print(f"  ⚠ 工作区尚未建 {UNIVERSAL_DIR}（跨层通用知识）")
+        print(f"     用户首次说「这是通用的」时跑：python 工具\\记忆管家.py 建层 {root} --通用")
+
     # 1) 已有哪些记忆层（任意层数）
-    hits = sorted(p for p in root.rglob("*") if p.is_dir() and LAYER_NAME_RE.match(p.name))
+    hits = sorted(p for p in root.rglob("*") if p.is_dir() and LAYER_RE.match(p.name))
     print(f"\n[1] 已有记忆层 {len(hits)} 个：")
     for h in hits:
         exp = expected_layer_depth(h.parent, root)
@@ -360,11 +541,11 @@ def cmd_takeover(args) -> None:
         print(f"  {mark} {h}")
 
     # 2) 层级完整性检查（缺对应层号记忆层的候选子模块）
-    print()
+    print("\n[2] 层级完整性检查：")
     cmd_check(argparse.Namespace(workspace=str(root)))
 
     # 3) 每个记忆层做并发校验（检测其他 Agent/Harness 的改动）
-    print()
+    print("\n[3] 各层并发校验：")
     for h in hits:
         cmd_verify(argparse.Namespace(workspace=str(h.parent), layer_dir=h.name,
                                       refresh=False, by=by))
@@ -380,6 +561,30 @@ def cmd_takeover(args) -> None:
             print("  ⚠ 按协议必须先询问用户库路径，绝不擅自选路径、绝不静默回退到工作区。")
     except Exception:
         print("  本机配置不可读（未配置）。按协议先询问用户临时脚本库路径。")
+    # 5) 交付流程状态（cross-agent-dev-workflow 的阶段状态机存在 5_代办.md）
+    print("\n[5] 交付流程状态（cross-agent-dev-workflow）：")
+    status_layers = []
+    for h in hits:
+        todo = h / "5_代办.md"
+        if not todo.is_file():
+            continue
+        try:
+            text = read_text(todo)
+        except (OSError, UnicodeDecodeError):
+            continue
+        m = re.search(r"## 🚦[^\n]*\n(.*?)(?=\n## |\Z)", text, re.S)
+        if m:
+            status_layers.append((h, m.group(1)))
+    if status_layers:
+        h, block = status_layers[0]
+        print(f"  （{h.relative_to(root).as_posix() if h.parent != root else '根层'}/5_代办.md）")
+        for line in block.strip("\n").splitlines():
+            if line.strip():
+                print(f"    {line.rstrip()}")
+        if len(status_layers) > 1:
+            print(f"  （另有 {len(status_layers) - 1} 层也有 🚦 状态段：{', '.join(x[0].name for x in status_layers[1:])}）")
+    else:
+        print("  （无 🚦 状态段：未使用 cross-agent-dev-workflow，或尚未建立状态段）")
     print("\n后续：有记忆→深读各件再动手（先看根记忆层 0_索引 的「分层方案」）；缺层→建层+深度填写；无记忆→深读整个项目后自主定层数（1~N 层，不设上限）。")
 
 
@@ -391,8 +596,8 @@ def _resolve_mem_dir(workspace: str, layer_dir: str) -> Path:
         mem = Path(workspace).resolve() if workspace else None
         if mem is None:
             sys.exit("请用 --层 <记忆第X层> 或直接给 <记忆文件夹路径>")
-    if not mem.is_dir() or not LAYER_NAME_RE.match(mem.name):
-        sys.exit(f"不是合法的 记忆第X层 文件夹：{mem}")
+    if not mem.is_dir() or not (LAYER_NAME_RE.match(mem.name) or mem.name == UNIVERSAL_DIR):
+        sys.exit(f"不是合法的 记忆第X层 / {UNIVERSAL_DIR} 文件夹：{mem}")
     return mem
 
 
@@ -400,9 +605,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="记忆管家（cross-agent-memory 辅助工具；层号=记忆层级序数，层数 1~99 不限）")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("建层", help="就地创建 记忆第X层（0_索引+6件格式参考）")
+    p = sub.add_parser("建层", help="就地创建 记忆第X层（0_索引+6件格式参考）；--通用 建中央 记忆_通用")
     p.add_argument("target", help="要在哪个文件夹里建（就地嵌入）")
-    p.add_argument("--层", required=True, help="层号：中文数字（一/二/三/四…）或阿拉伯数字（1/2/3/4…）；应等于记忆层级序数（根=一）")
+    p.add_argument("--层", required=False, default="", help="层号：中文数字（一/二/三/四…）或阿拉伯数字（1/2/3/4…）；应等于记忆层级序数（根=一）")
+    p.add_argument("--通用", action="store_true", help="建中央 记忆_通用/（与 --层 互斥）")
     p.set_defaults(fn=cmd_build)
 
     p = sub.add_parser("扫描", help="列出工作区里已有的 记忆第X层（任意层数）")
@@ -426,7 +632,17 @@ def main() -> None:
     p.add_argument("--by", default="")
     p.set_defaults(fn=cmd_verify)
 
-    p = sub.add_parser("接手", help="一键接手入口：扫描记忆层 + 层级完整性检查 + 各层并发校验 + 联动配置检查")
+    p = sub.add_parser("刷新通用", help="重建所有 记忆第X层/0_索引.md 的「🔗 通用知识」段（保留摘要/补新/删失效）并刷新指纹")
+    p.add_argument("workspace")
+    p.add_argument("--by", default="", help="更新者署名（默认取本机配置 agent_name）")
+    p.set_defaults(fn=cmd_refresh_universal)
+
+    p = sub.add_parser("检索", help="跨全部记忆层与 记忆_通用 全文检索关键词（文件:行号:内容）")
+    p.add_argument("workspace")
+    p.add_argument("keyword")
+    p.set_defaults(fn=cmd_search)
+
+    p = sub.add_parser("接手", help="一键接手入口：记忆_通用检查 + 扫描记忆层 + 层级完整性检查 + 各层并发校验 + 交付流程状态 + 联动配置检查")
     p.add_argument("workspace")
     p.add_argument("--by", default="", help="署名（默认取本机配置 agent_name）")
     p.set_defaults(fn=cmd_takeover)

@@ -14,19 +14,21 @@
 - **外部统一库存放**：用户每台设备指定一个工作区外的临时脚本库（`~/.agent-tsg/config.json` 记录，未配置必问用户）；
 - **先复用后创建**：建脚本前必查 `manifests/index.json` 索引（用途/语言/哈希/使用次数）；
 - **分级处置**：自己的脚本自动治理；历史遗留按复用价值迁移或删除；来源不明只隔离（quarantine/）+ 报告 + 等用户确认；真实工程文件绝不自动删；
-- **深度联动 cross-agent-memory**：判断、偏好、审计结论、待办全部入分层记忆，跨 Agent 延续。
+- **深度联动（三位一体）**：与 `cross-agent-memory`（就地记忆）、`cross-agent-dev-workflow-skill`（项目交付总流程）共生——判断、偏好、审计结论、待办全部入分层记忆，跨 Agent 延续；dev-workflow 的删除操作全部委托本技能分级红线。
 
 ## 目录结构
 
 ```
-SKILL.md                  # 操作协议（Agent 读这个）
-README.md                 # 本文件
+SKILL.md                          # 操作协议（Agent 读这个）
+README.md                         # 本文件
 安装指引.md
-配置/                     # 本机配置说明（实际配置在 ~/.agent-tsg/config.json）
-工具/临时脚本管家.py       # 主工具（Python，跨平台）
-工具/临时脚本管家.ps1      # Windows 薄封装（无 Python 时降级支持初始化）
-模板/                     # 审计报告、清理决策清单模板
-联动/cross-agent-memory.md # 联动约定
+配置/                             # 本机配置说明（实际配置在 ~/.agent-tsg/config.json）
+工具/临时脚本管家.py               # 主工具（Python，跨平台）
+工具/临时脚本管家.ps1              # Windows 薄封装（无 Python 时降级支持初始化）
+工具/README.md                    # 工具命令说明
+模板/                             # 审计报告、清理决策清单模板
+联动/cross-agent-memory.md        # 与记忆技能的联动约定
+联动/cross-agent-dev-workflow.md  # 与交付总流程技能的联动约定（三位一体）
 ```
 
 ## 快速上手
