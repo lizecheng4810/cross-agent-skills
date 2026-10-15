@@ -3,6 +3,7 @@
 # Python
 __pycache__/
 *.pyc
+*.log
 # 系统文件
 Thumbs.db
 .DS_Store
