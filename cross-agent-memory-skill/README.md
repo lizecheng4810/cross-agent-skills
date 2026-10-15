@@ -78,6 +78,6 @@ cross-agent-memory-skill/（skill 目录）
 
 ## 跨 harness / 跨电脑
 
-- **跨 harness**：`SKILL.md` 是标准技能格式，任何支持 skill 的 Agent 都能加载；复制 `cross-agent-memory-skill/` 到对应 harness 的 skills 目录即可。
+- **跨 harness**：`SKILL.md` 是标准技能格式，任何支持 skill 的 Agent 都能加载；复制 `cross-agent-memory-skill/` 到对应 harness 的 skills 目录即可（或从[套件 Release](https://github.com/lizecheng4810/cross-agent-skills/releases) 下载 zip 解压获得本文件夹）。
 - **跨电脑**：因为记忆就嵌在工作区文件夹里，**把工作区文件夹拷过去，记忆跟着走**；skill 本体（`cross-agent-memory-skill/`）拷到新机器的 skills 目录即可用。
 - 判断层数、判断层级、深度理解填写由 Agent 自主完成，无需脚本；工具只按「层号=记忆层级序数」做机械推断与校验。
