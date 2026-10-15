@@ -1,6 +1,7 @@
 # Changelog · cross-agent-skills 三位一体套件
 
 版本号记录在各技能 SKILL.md 的 `metadata.version`；套件整体以本文件为准。
+发布页：<https://github.com/lizecheng4810/cross-agent-skills/releases>（每个版本附三个技能的 zip 安装包）
 
 ## 2026-10-15 · v1.1.0 —— 三位一体
 
