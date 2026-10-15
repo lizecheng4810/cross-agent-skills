@@ -51,3 +51,4 @@ python 工具\临时脚本管家.py 报告
 ```
 
 日常使用不需要记命令——装好 skill 后，Agent 会按 SKILL.md 协议在接手任务、创建脚本、结束任务三个节点自动执行。
+安装：拷贝本文件夹到目标 harness 的 skills 目录（或从[套件 Release](https://github.com/lizecheng4810/cross-agent-skills/releases) 下载 zip 解压获得本文件夹）。
