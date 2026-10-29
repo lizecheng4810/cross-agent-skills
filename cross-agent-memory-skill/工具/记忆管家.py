@@ -7,15 +7,15 @@
 本脚本只做机械操作。**层号约定 = 记忆层级序数**：工作区根 = 第一层；某文件夹的层号 =
 根到它的路径上拥有记忆层的祖先数 + 1（分组文件夹如 platforms 不建层就不占层号）。
 文件夹名形如 记忆第X层（X 为中文数字，一~九十九）。
-  建层   就地创建 记忆第X层 文件夹（0_索引 + 6 件格式参考）；--层 接受中文数字（一/二/三/四…）或阿拉伯数字（1/2/3/4…）
+  建层   就地创建 记忆第X层 文件夹（默认 0_索引 + 5_代办）；--完整模板 创建旧版全部主题文件
          加 --通用 则在目标文件夹下建中央 记忆_通用/（0_通用索引 + 4 件，任何层都能引用）
   扫描   列出工作区里已有的 记忆第X层 文件夹（任意层数，含 记忆_通用）
   检查   层级完整性检查：按记忆层级序数推断每处应有的 记忆第X层，找出缺失的候选子模块/子工程
-  索引   为某层的记忆文件生成/更新指纹档案（记忆索引.json：sha256 + mtime + 更新者）
+  索引   为当前存在的标准记忆文件生成/更新指纹，并清除已删除标准文件的旧指纹
   校验   对比当前文件与指纹档案，报告被其他 Agent/Harness 改过的文件（并发检测）
   刷新通用 重建所有 记忆第X层/0_索引.md 的「🔗 通用知识」段（保留已有摘要，补新文件、删失效引用）
-  检索   跨全部记忆层与 记忆_通用 全文检索关键词，输出 文件:行号:内容
-  接手   一键接手入口：记忆_通用 检查 + 扫描 + 层级完整性检查 + 各层并发校验 + 交付流程状态 + 临时脚本库配置联动检查
+  检索   在指定范围的记忆文档中词面检索，可多关键词、限范围和结果数
+  接手   默认快速检查根层或 --scope 目标路径；--full-audit 显式完整盘点
   帮助   显示本说明
 
 记忆索引.json 存放于各 记忆第X层 文件夹内，随工作区走。
@@ -57,15 +57,16 @@ CORE_FILES = [
     "5_代办.md",
     "6_需要我配合.txt",
 ]
+# 新层默认只建导航与当前交接；主题文件在有真实内容时再创建。
+DEFAULT_LAYER_FILES = ("0_索引.md", "5_代办.md")
 # 支持一~九十九层（任意层数，由 Agent 深度研究项目后自主决定）
 CN_DIGITS = "一二三四五六七八九"
 LAYER_RE = re.compile(r"^记忆第([一二三四五六七八九十]{1,3})层$")
 LAYER_NAME_RE = re.compile(r"^记忆第[一二三四五六七八九十]{1,3}层$")
-# 检查时跳过的系统/依赖/产物/记忆/通用源码目录（平台名不排除，让它们能作为候选）
+# 跳过可再生的依赖/构建/缓存目录；源码/文档/测试目录可能包含独立模块，不按名称忽略。
 SKIP_NAMES = re.compile(
-    r"^(node_modules|\.git|__pycache__|\.venv|venv|dist|build|\.idea|\.vscode|release|"
-    r"public|src|server|desktop|docs|scripts|assets|test|tests|TMP_|文件备份|已生成|"
-    r"记忆第[一二三四五六七八九十]{1,3}层|记忆_通用)$"
+    r"^(node_modules|\.git|__pycache__|\.venv|venv|dist|build|target|out|obj|coverage|release|"
+    r"\.idea|\.vscode|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.tox|\.cache|\.next|\.nuxt|vendor)$"
 )
 # 判定「独立模块/子工程」的项目标志文件（有其一即视为候选）
 PROJECT_MARKERS = (
@@ -73,7 +74,15 @@ PROJECT_MARKERS = (
     "setup.py", "requirements.txt", "Cargo.toml", "pom.xml", "build.gradle",
     "pubspec.yaml", "CMakeLists.txt", "go.mod", ".git", "composer.json", "*.csproj",
 )
-MAX_CHECK_DEPTH = 3  # 检查时向下递归的层数（相对工作区根）；更深处对其单独执行 检查
+def configure_console() -> None:
+    """避免 Windows 代码页无法编码提示符时让只读检查意外崩溃。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
 
 
 def to_cn(n: int) -> str:
@@ -124,7 +133,7 @@ def layer_name(n: int) -> str:
     return f"记忆第{to_cn(n)}层"
 
 
-def expected_layer_depth(dirpath: Path, root: Path) -> int:
+def expected_layer_depth(dirpath: Path, root: Path, errors=None) -> int:
     """层号 = 记忆层级序数：根=第一层；某文件夹的层号 = 根到它的路径上
     （含根、不含自身）拥有记忆层的祖先数 + 1。分组文件夹（如 platforms、
     AI_NEWS_MARKETS）自己不建记忆层就不占层号，避免模块层号被分组层级虚增。"""
@@ -135,9 +144,27 @@ def expected_layer_depth(dirpath: Path, root: Path) -> int:
     ancestor = root
     for part in rel.parts[:-1]:  # 严格祖先（不含自身）
         ancestor = ancestor / part
-        if any(p.is_dir() and LAYER_NAME_RE.match(p.name) for p in ancestor.iterdir()):
+        if has_layer(ancestor, errors):
             n += 1
     return n + 2  # 1（根层）+ 祖先已占层数 + 1（本层）
+
+
+def _record_scan_error(errors, path, error) -> None:
+    if errors is None:
+        return
+    item = (str(path), str(error))
+    if item not in errors:
+        errors.append(item)
+
+
+def _report_scan_errors(errors) -> None:
+    if not errors:
+        return
+    print(f"  ⚠ 有 {len(errors)} 个位置无法读取，扫描结果不完整：")
+    for path, message in errors[:20]:
+        print(f"    ! {path}: {message}")
+    if len(errors) > 20:
+        print(f"    … 另有 {len(errors) - 20} 个读取错误未展开。")
 
 
 def tpl_dir() -> Path:
@@ -146,6 +173,11 @@ def tpl_dir() -> Path:
 
 def tpl_universal_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "_模板" / "记忆_通用"
+
+
+def tool_command() -> str:
+    """Return a runnable command path without assuming the caller's working directory."""
+    return f'python "{Path(__file__).resolve()}"'
 
 
 def read_text(p: Path) -> str:
@@ -162,13 +194,16 @@ def local_agent_name() -> str:
 
 
 def write_text(p: Path, s: str) -> None:
-    p.write_text(s, encoding="utf-8", newline="\n")
+    # Path.write_text(newline=...) 仅 Python 3.10+ 支持；工具承诺兼容 3.8+。
+    with p.open("w", encoding="utf-8", newline="\n") as f:
+        f.write(s)
 
 
 def atomic_write_text(p: Path, s: str) -> None:
     """原子写入：先写临时文件再 os.replace，避免并发写把文件截断成半截 JSON。"""
     tmp = p.with_suffix(p.suffix + f".tmp{os.getpid()}")
-    tmp.write_text(s, encoding="utf-8", newline="\n")
+    with tmp.open("w", encoding="utf-8", newline="\n") as f:
+        f.write(s)
     os.replace(tmp, p)
 
 
@@ -251,13 +286,14 @@ def cmd_build(args) -> None:
     if mem_dir.exists():
         sys.exit(f"该文件夹下已有记忆文件夹：{mem_dir}（如需更新，直接编辑里面的文件）")
     mem_dir.mkdir(parents=True)
-    for name in CORE_FILES:
+    template_files = CORE_FILES if getattr(args, "完整模板", False) else DEFAULT_LAYER_FILES
+    for name in template_files:
         src = tpl_dir() / name
         write_text(mem_dir / name, read_text(src) if src.exists() else f"# {name}\n")
     # 真正生成初始指纹档案（对模板原样文件逐个记录 sha256），否则 校验 会误报"尚无指纹档案"
     data = load_index(mem_dir)
     files = data.setdefault("files", {})
-    for name in CORE_FILES:
+    for name in template_files:
         p = mem_dir / name
         if p.is_file():
             files[name] = {
@@ -266,8 +302,9 @@ def cmd_build(args) -> None:
                 "bytes": p.stat().st_size,
             }
     save_index(mem_dir, data)
-    print(f"✔ 已就地创建：{mem_dir}\\（含 0_索引 + 6 件格式参考 + {INDEX_NAME}）")
-    print("  ⚠ 请按 SKILL.md 深度理解该层内容 + 融合对话经验后填写，不是留空。")
+    files_label = "0_索引 + 6 件格式参考" if getattr(args, "完整模板", False) else "0_索引 + 5_代办 + 指纹档案"
+    print(f"✔ 已就地创建：{mem_dir}\\（含 {files_label} + {INDEX_NAME}）")
+    print("  ⚠ 只补充本层有长期价值的内容；其他主题文件需要时再从 _模板 复制。")
     print("  ⚠ 层号应与记忆层级序数一致（根=一；分组文件夹不建层就不占层号）；层数与各层职责请记入根记忆层 0_索引 的「分层方案」。")
     # 顺手提示：如工作区已有 记忆_通用，0_索引 模板已含「🔗 通用知识」段可自动引用
     uni = target / UNIVERSAL_DIR if (target / UNIVERSAL_DIR).is_dir() else None
@@ -278,7 +315,7 @@ def cmd_build(args) -> None:
                 break
     if uni is None:
         print(f"  💡 工作区尚未建 {UNIVERSAL_DIR}（跨层通用知识），用户首次提到「通用」时跑：")
-        print(f"     python 工具\\记忆管家.py 建层 <工作区> --通用")
+        print(f'     {tool_command()} 建层 "<工作区>" --通用')
 
 
 # ---------- 扫描 ----------
@@ -286,8 +323,14 @@ def cmd_scan(args) -> None:
     root = Path(args.workspace).resolve()
     if not root.is_dir():
         sys.exit(f"工作区不存在：{root}")
-    hits = sorted(p for p in root.rglob("*") if p.is_dir() and LAYER_NAME_RE.match(p.name))
-    universal_hits = sorted(p for p in root.iterdir() if p.is_dir() and p.name == UNIVERSAL_DIR)
+    errors = []
+    hits = sorted(iter_memory_layers(root, errors))
+    try:
+        universal_hits = sorted(p for p in root.iterdir()
+                                if p.is_dir() and not p.is_symlink() and p.name == UNIVERSAL_DIR)
+    except OSError as e:
+        universal_hits = []
+        _record_scan_error(errors, root, e)
     print(f"扫描 {root} 下的记忆文件夹（共 {len(hits)} 层，另 记忆_通用 {len(universal_hits)} 个）：")
     if not hits and not universal_hits:
         print("  （未找到 记忆第X层 或 记忆_通用，可用 建层 命令就地创建）")
@@ -297,15 +340,111 @@ def cmd_scan(args) -> None:
         exp = expected_layer_depth(h.parent, root)
         mark = "✓" if to_cn(exp) == LAYER_RE.match(h.name).group(1) else "⚠层号与深度不符"
         print(f"  {mark} {h}")
+    _report_scan_errors(errors)
 
 
 # ---------- 层级完整性检查 ----------
-def has_layer(d: Path) -> bool:
-    return any(p.is_dir() and LAYER_NAME_RE.match(p.name) for p in d.iterdir())
+def has_layer(d: Path, errors=None) -> bool:
+    try:
+        return any(p.is_dir() and not p.is_symlink() and LAYER_NAME_RE.match(p.name) for p in d.iterdir())
+    except OSError as e:
+        _record_scan_error(errors, d, e)
+        return False
 
 
-def is_project_candidate(d: Path) -> bool:
-    names = {p.name for p in d.iterdir()}
+def declared_exclusions(root: Path, errors=None):
+    """读取根索引「例外目录」段里的反引号相对路径。"""
+    index_path = root / layer_name(1) / "0_索引.md"
+    try:
+        if index_path.parent.is_symlink() or index_path.is_symlink() or not index_path.is_file():
+            return []
+        text = read_text(index_path)
+    except (OSError, UnicodeDecodeError) as e:
+        _record_scan_error(errors, index_path, e)
+        return []
+    match = re.search(r"^## 例外目录[^\n]*\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+    if not match:
+        return []
+    result = []
+    for line in match.group(1).splitlines():
+        for value in re.findall(r"`([^`]+)`", line):
+            value = value.strip().replace("\\", "/")
+            if value.startswith("/") or re.match(r"^[A-Za-z]:", value):
+                continue
+            value = value.rstrip("/")
+            parts = value.split("/")
+            if (value and "<" not in value and ":" not in value
+                    and all(part not in ("", ".", "..") for part in parts)):
+                result.append(value.casefold())
+    return result
+
+
+def is_declared_exclusion(root: Path, directory: Path, excluded=None, errors=None) -> bool:
+    excluded = declared_exclusions(root, errors) if excluded is None else excluded
+    try:
+        relative = directory.resolve().relative_to(root.resolve()).as_posix().casefold()
+    except ValueError:
+        return True
+    except (OSError, RuntimeError) as e:
+        _record_scan_error(errors, directory, e)
+        return True
+    return any(relative == item or relative.startswith(item + "/") for item in excluded)
+
+
+def iter_memory_layers(root: Path, errors=None):
+    """遍历记忆层；忽略依赖/生成目录、符号链接和根索引显式声明的例外路径。"""
+    excluded = declared_exclusions(root, errors)
+
+    def onerror(error):
+        _record_scan_error(errors, getattr(error, "filename", root), error)
+
+    for current, dirnames, _ in os.walk(root, topdown=True, followlinks=False, onerror=onerror):
+        base = Path(current)
+        kept = []
+        for name in dirnames:
+            child = base / name
+            if child.is_symlink() or SKIP_NAMES.match(name) or is_declared_exclusion(root, child, excluded, errors):
+                continue
+            if LAYER_NAME_RE.match(name):
+                yield child
+                continue
+            kept.append(name)
+        dirnames[:] = kept
+
+
+def iter_memory_files(root: Path, start=None, errors=None):
+    """遍历记忆文档，跳过依赖/生成目录、符号链接和已声明的例外路径。"""
+    excluded = declared_exclusions(root, errors)
+
+    def onerror(error):
+        _record_scan_error(errors, getattr(error, "filename", start or root), error)
+
+    for current, dirnames, filenames in os.walk(start or root, topdown=True, followlinks=False, onerror=onerror):
+        base = Path(current)
+        dirnames[:] = [
+            name for name in dirnames
+            if not (base / name).is_symlink()
+            and not SKIP_NAMES.match(name)
+            and not is_declared_exclusion(root, base / name, excluded, errors)
+        ]
+        for name in filenames:
+            path = base / name
+            if name == INDEX_NAME or path.is_symlink() or path.suffix.lower() not in (".md", ".txt"):
+                continue
+            try:
+                rel = path.relative_to(root)
+            except ValueError:
+                continue
+            if rel.parts[0] == UNIVERSAL_DIR or any(LAYER_NAME_RE.match(part) for part in rel.parts):
+                yield path
+
+
+def is_project_candidate(d: Path, errors=None) -> bool:
+    try:
+        names = {p.name for p in d.iterdir()}
+    except OSError as e:
+        _record_scan_error(errors, d, e)
+        return False
     for marker in PROJECT_MARKERS:
         if marker.startswith("*."):
             if any(n.endswith(marker[1:]) for n in names):
@@ -315,47 +454,80 @@ def is_project_candidate(d: Path) -> bool:
     return False
 
 
+def resolve_scope(root: Path, raw_scope: str) -> Path:
+    """解析工作区内的范围路径；拒绝越出工作区的绝对/相对路径。"""
+    if not raw_scope:
+        return root
+    candidate = Path(raw_scope)
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    candidate = candidate.resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        sys.exit(f"范围路径必须位于工作区内：{candidate}")
+    if not candidate.exists():
+        sys.exit(f"范围路径不存在：{candidate}")
+    return candidate
+
+
 def cmd_check(args) -> None:
     root = Path(args.workspace).resolve()
     if not root.is_dir():
         sys.exit(f"工作区不存在：{root}")
-    print(f"层级完整性检查 {root} ...（%s）" % "层号=记忆层级序数（根=一；分组文件夹不建层就不占层号）")
+    scope = resolve_scope(root, getattr(args, "scope", ""))
+    if scope.is_file():
+        scope = scope.parent
+    max_depth = getattr(args, "max_depth", 0)
+    if max_depth < 0:
+        sys.exit("--max-depth 必须为 0（不限深度）或正整数。")
+    label = "完整审计" if not max_depth else f"限深审计（最多 {max_depth} 层）"
+    print(f"层级完整性检查：{scope}（{label}；符号链接目录不跟随）")
+    errors = []
+    excluded = declared_exclusions(root, errors)
+    if scope != root and is_declared_exclusion(root, scope, excluded, errors):
+        print("  已跳过：指定范围位于根索引声明的例外目录内，不参与完整性审计。")
+        _report_scan_errors(errors)
+        return
     checked, missing = 0, []
-    platforms = root / "platforms"
 
     def walk(d: Path, depth: int, forced: bool):
         nonlocal checked
-        if depth > MAX_CHECK_DEPTH:
+        if max_depth and depth > max_depth:
             return
         checked += 1
-        exp = expected_layer_depth(d, root)
-        if has_layer(d):
-            pass  # 本层已建记忆，继续看下层
-        elif forced or depth == 1 or is_project_candidate(d):
+        exp = expected_layer_depth(d, root, errors)
+        if not has_layer(d, errors) and (forced or d == root or is_project_candidate(d, errors)):
             missing.append((d, exp))
-        # 向下递归：跳过系统/依赖/产物目录；platforms 的直接子目录视为强制候选
-        if depth < MAX_CHECK_DEPTH:
-            for child in sorted(d.iterdir()):
-                if not child.is_dir():
-                    continue
-                if SKIP_NAMES.match(child.name):
-                    continue
-                walk(child, depth + 1, forced=(child.parent.name == "platforms"))
+        if max_depth and depth >= max_depth:
+            return
+        try:
+            children = sorted(d.iterdir())
+        except OSError as e:
+            _record_scan_error(errors, d, e)
+            return
+        for child in children:
+            if (not child.is_dir() or child.is_symlink() or SKIP_NAMES.match(child.name)
+                    or LAYER_NAME_RE.match(child.name) or child.name == UNIVERSAL_DIR
+                    or is_declared_exclusion(root, child, excluded, errors)):
+                continue
+            walk(child, depth + 1, forced=(child.parent.name == "platforms"))
 
-    walk(root, 0, forced=True)
-    # 根自身（第一层）单独提示
-    root_missing = not has_layer(root)
-    print(f"  已检查 {checked} 个目录（含根，向下最多 {MAX_CHECK_DEPTH} 级；platforms 下各平台强制候选）。")
+    walk(scope, 0, forced=(scope.parent.name == "platforms"))
+    root_missing = scope == root and not has_layer(root, errors)
+    print(f"  已检查 {checked} 个目录。")
     if root_missing:
         print("  ⚠ 工作区根缺少 记忆第一层。")
     if missing:
-        print("  ⚠ 以下候选文件夹缺少对应层号的记忆文件夹（应主动补齐，不等用户提醒）：")
+        print("  候选目录（请对照根层分层方案判断；候选不等于必须建层）：")
         for d, exp in missing:
-            print(f"    ✗ {d}  ← 应建 {layer_name(exp)}")
+            print(f"    ? {d}  ← 若确有独立上下文，可建 {layer_name(exp)}")
     else:
         print("  ✓ 未发现缺记忆层的候选子模块文件夹。")
-    print("  说明：候选判定 = 一级子目录，或有项目标志文件（README/package.json/.git 等）的目录，或 platforms 下各平台。")
-    print("        更深处模块请对其单独执行 检查；层号是否合适最终由 Agent 按分层方案判断。")
+    if excluded:
+        print(f"  已遵从根索引声明的 {len(excluded)} 个例外路径。")
+    print("  候选判定基于目录结构和项目标志文件；工具不自动创建记忆层。")
+    _report_scan_errors(errors)
 
 
 def _files_of(mem_dir: Path):
@@ -368,6 +540,11 @@ def cmd_index(args) -> None:
     mem_dir = _resolve_mem_dir(args.workspace, args.layer_dir)
     data = load_index(mem_dir)
     files = data.setdefault("files", {})
+    removed = []
+    for name in _files_of(mem_dir):
+        if not (mem_dir / name).is_file() and name in files:
+            files.pop(name, None)
+            removed.append(name)
     n = 0
     for name in _files_of(mem_dir) + [INDEX_NAME]:
         p = mem_dir / name
@@ -385,6 +562,8 @@ def cmd_index(args) -> None:
         data["_last_updated_by"] = args.by
     save_index(mem_dir, data)
     print(f"✔ 已记录 {mem_dir.name} 内 {n} 个文件的指纹 → {mem_dir / INDEX_NAME}")
+    if removed:
+        print(f"  已清除已删除标准记忆文件的旧指纹：{', '.join(removed)}")
 
 
 # ---------- 校验（并发检测：谁在我上次记录之后改过文件） ----------
@@ -447,9 +626,9 @@ def cmd_refresh_universal(args) -> None:
     root = Path(args.workspace).resolve()
     if not root.is_dir():
         sys.exit(f"工作区不存在：{root}")
-    if not (root / UNIVERSAL_DIR).is_dir():
-        sys.exit(f"工作区还没有 {UNIVERSAL_DIR}（先跑：python 工具\\记忆管家.py 建层 <工作区> --通用）")
-    hits = sorted(p for p in root.rglob("*") if p.is_dir() and LAYER_NAME_RE.match(p.name))
+    if not (root / UNIVERSAL_DIR).is_dir() or (root / UNIVERSAL_DIR).is_symlink():
+        sys.exit(f'工作区还没有 {UNIVERSAL_DIR}（先跑：{tool_command()} 建层 "<工作区>" --通用）')
+    hits = sorted(iter_memory_layers(root))
     if not hits:
         print("（工作区没有任何 记忆第X层，无需刷新）")
         return
@@ -483,66 +662,157 @@ def cmd_refresh_universal(args) -> None:
     print(f"完成：{changed}/{len(hits)} 层的「🔗 通用知识」段已对齐当前 记忆_通用/（其余已一致）。")
 
 
-# ---------- 检索（跨全部记忆层 + 记忆_通用 全文检索） ----------
+# ---------- 检索（默认词面匹配；命中后只读相关文档） ----------
 def cmd_search(args) -> None:
     root = Path(args.workspace).resolve()
     if not root.is_dir():
         sys.exit(f"工作区不存在：{root}")
-    kw = args.keyword
-    total = 0
-    for p in sorted(root.rglob("*")):
+    start = resolve_scope(root, getattr(args, "scope", ""))
+    errors = []
+    excluded = declared_exclusions(root, errors)
+    if is_declared_exclusion(root, start, excluded, errors):
+        print("检索范围位于根索引声明的例外目录内，已跳过。")
+        _report_scan_errors(errors)
+        return
+    terms = [args.keyword] + list(getattr(args, "term", []) or [])
+    terms = list(dict.fromkeys(term.casefold() for term in terms if term.strip()))
+    if not terms:
+        sys.exit("至少提供一个非空关键词。")
+    limit = int(getattr(args, "top", 20))
+    if limit < 1:
+        sys.exit("--top 必须为正整数。")
+    files = [start] if start.is_file() else iter_memory_files(root, start, errors)
+    matches = []
+    for p in files:
         if not p.is_file() or p.name == INDEX_NAME:
             continue
-        rel = p.relative_to(root)
+        try:
+            rel = p.relative_to(root)
+        except ValueError:
+            continue
         in_memory = rel.parts[0] == UNIVERSAL_DIR or any(LAYER_NAME_RE.match(part) for part in rel.parts)
         if not in_memory or p.suffix.lower() not in (".md", ".txt"):
             continue
         try:
             lines = read_text(p).splitlines()
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError) as e:
+            _record_scan_error(errors, p, e)
             continue
-        shown = 0
+        file_hits = []
         for i, line in enumerate(lines, 1):
-            if kw in line:
-                print(f"{rel.as_posix()}:{i}: {line.strip()[:80]}")
-                total += 1
-                shown += 1
-                if shown >= 5:
-                    break
-    print(f"检索完成：命中 {total} 行（每文件最多显示 5 行；细节请打开对应记忆文件）。")
+            normalized = line.casefold()
+            found = [term for term in terms if term in normalized]
+            if found:
+                file_hits.append((i, line.strip()[:160], found))
+        if file_hits:
+            score = sum(len(found) for _, _, found in file_hits)
+            matches.append((score, rel.as_posix(), file_hits))
+    matches.sort(key=lambda item: (-item[0], item[1]))
+    total = 0
+    for score, rel, file_hits in matches:
+        for line_no, excerpt, found in file_hits:
+            if total >= limit:
+                break
+            print(f"[{score}] {rel}:{line_no}: {excerpt}  (命中：{', '.join(found)})")
+            total += 1
+        if total >= limit:
+            break
+    print(f"检索完成：返回 {total} 行，扫描 {len(matches)} 个命中文件；词面搜索不做语义推断。")
+    _report_scan_errors(errors)
 
 
-# ---------- 接手（一键入口：扫描 + 层级完整性检查 + 各层并发校验） ----------
-def cmd_takeover(args) -> None:
-    """把两技能共用的「接手任务第一步」工具化：一次跑完 扫描/检查/校验，
-    并提示本机临时脚本库配置状态（联动 cross-agent-scratchpad-skill）。"""
+def _layers_on_scope_chain(root: Path, scope: Path, errors=None):
+    """返回工作区根至目标路径上的记忆层，不扫描兄弟目录。"""
+    target_layer = scope if LAYER_RE.match(scope.name) else None
+    target = scope.parent if target_layer else (scope.parent if scope.is_file() else scope)
+    rel = target.relative_to(root)
+    dirs = [root]
+    current = root
+    for part in rel.parts:
+        current = current / part
+        dirs.append(current)
+    selected = []
+    excluded = declared_exclusions(root, errors)
+    for directory in dirs:
+        if is_declared_exclusion(root, directory, excluded, errors):
+            continue
+        try:
+            layers = sorted(p for p in directory.iterdir()
+                            if p.is_dir() and not p.is_symlink() and LAYER_RE.match(p.name))
+        except OSError as e:
+            _record_scan_error(errors, directory, e)
+            continue
+        if not layers:
+            continue
+        expected = to_cn(expected_layer_depth(directory, root, errors))
+        selected.append(next((p for p in layers if LAYER_RE.match(p.name).group(1) == expected), layers[0]))
+    if target_layer and not is_declared_exclusion(root, target_layer, excluded, errors) and target_layer not in selected:
+        selected.append(target_layer)
+    # 同一路径下重复层名/异常布局不应导致重复校验。
+    return list(dict.fromkeys(selected))
+
+
+def _print_workflow_status(root: Path, layers, errors=None) -> None:
+    statuses = []
+    for layer in layers:
+        todo = layer / "5_代办.md"
+        if not todo.is_file():
+            continue
+        try:
+            text = read_text(todo)
+        except (OSError, UnicodeDecodeError) as e:
+            _record_scan_error(errors, todo, e)
+            continue
+        match = re.search(r"## 🚦[^\n]*\n(.*?)(?=\n## |\Z)", text, re.S)
+        if match:
+            statuses.append((layer, match.group(1)))
+    if not statuses:
+        print("  （相关层没有 🚦 交付状态段）")
+        return
+    for layer, block in statuses:
+        label = layer.relative_to(root).as_posix()
+        print(f"  [{label}/5_代办.md]")
+        for line in block.strip("\n").splitlines():
+            if line.strip():
+                print(f"    {line.rstrip()}")
+
+
+# ---------- 全量接手审计（显式调用；快速接手不遍历兄弟层） ----------
+def cmd_takeover_full(args) -> None:
+    """完整盘点记忆层、按需范围检查并校验记忆指纹。"""
     root = Path(args.workspace).resolve()
     if not root.is_dir():
         sys.exit(f"工作区不存在：{root}")
     by = args.by or local_agent_name()
+    errors = []
     print(f"=== 接手检查 {root} ===")
 
     # 0) 通用记忆文件夹（记忆_通用）
     print("\n[0] 通用记忆文件夹（记忆_通用）：")
-    universal_hits = sorted(p for p in root.iterdir() if p.is_dir() and p.name == UNIVERSAL_DIR)
+    try:
+        universal_hits = sorted(p for p in root.iterdir()
+                                if p.is_dir() and not p.is_symlink() and p.name == UNIVERSAL_DIR)
+    except OSError as e:
+        universal_hits = []
+        _record_scan_error(errors, root, e)
     if universal_hits:
         for u in universal_hits:
             print(f"  ✓ 已建：{u}")
     else:
         print(f"  ⚠ 工作区尚未建 {UNIVERSAL_DIR}（跨层通用知识）")
-        print(f"     用户首次说「这是通用的」时跑：python 工具\\记忆管家.py 建层 {root} --通用")
+        print(f'     用户首次说「这是通用的」时跑：{tool_command()} 建层 "{root}" --通用')
 
     # 1) 已有哪些记忆层（任意层数）
-    hits = sorted(p for p in root.rglob("*") if p.is_dir() and LAYER_RE.match(p.name))
+    hits = sorted(iter_memory_layers(root, errors))
     print(f"\n[1] 已有记忆层 {len(hits)} 个：")
     for h in hits:
-        exp = expected_layer_depth(h.parent, root)
+        exp = expected_layer_depth(h.parent, root, errors)
         mark = "✓" if to_cn(exp) == LAYER_RE.match(h.name).group(1) else "⚠层号与深度不符"
         print(f"  {mark} {h}")
 
-    # 2) 层级完整性检查（缺对应层号记忆层的候选子模块）
+    # 2) 层级完整性检查（候选只作提示，按分层方案判断，不自动建层）
     print("\n[2] 层级完整性检查：")
-    cmd_check(argparse.Namespace(workspace=str(root)))
+    cmd_check(argparse.Namespace(workspace=str(root), scope=getattr(args, "scope", ""), max_depth=0))
 
     # 3) 每个记忆层做并发校验（检测其他 Agent/Harness 的改动）
     print("\n[3] 各层并发校验：")
@@ -570,7 +840,8 @@ def cmd_takeover(args) -> None:
             continue
         try:
             text = read_text(todo)
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError) as e:
+            _record_scan_error(errors, todo, e)
             continue
         m = re.search(r"## 🚦[^\n]*\n(.*?)(?=\n## |\Z)", text, re.S)
         if m:
@@ -585,7 +856,57 @@ def cmd_takeover(args) -> None:
             print(f"  （另有 {len(status_layers) - 1} 层也有 🚦 状态段：{', '.join(x[0].name for x in status_layers[1:])}）")
     else:
         print("  （无 🚦 状态段：未使用 cross-agent-dev-workflow，或尚未建立状态段）")
-    print("\n后续：有记忆→深读各件再动手（先看根记忆层 0_索引 的「分层方案」）；缺层→建层+深度填写；无记忆→深读整个项目后自主定层数（1~N 层，不设上限）。")
+    print("\n后续：按当前任务路径选择记忆层，只读相关索引和主题文件；首次接手或信息不足时再扩大读取范围。")
+    _report_scan_errors(errors)
+
+
+# ---------- 快速接手（默认）：根索引 + 目标路径上的层 ----------
+def cmd_takeover(args) -> None:
+    """读取/校验当前任务范围；--full-audit 才遍历整个记忆树。"""
+    if getattr(args, "full_audit", False):
+        return cmd_takeover_full(args)
+    root = Path(args.workspace).resolve()
+    if not root.is_dir():
+        sys.exit(f"工作区不存在：{root}")
+    by = args.by or local_agent_name()
+    scope = resolve_scope(root, getattr(args, "scope", ""))
+    errors = []
+    excluded = declared_exclusions(root, errors)
+    scope_excluded = is_declared_exclusion(root, scope, excluded, errors)
+    layers = [] if scope_excluded else _layers_on_scope_chain(root, scope, errors)
+    print(f"=== 快速接手 {root} ===")
+    print(f"任务范围：{scope}")
+    universal = root / UNIVERSAL_DIR
+    print(f"通用记忆：{'已存在' if universal.is_dir() else '未建立'}")
+    print("相关记忆层：")
+    if scope_excluded:
+        print("  （任务范围位于根索引声明的例外目录内；不读取该目录中的记忆层。）")
+    elif not layers:
+        print("  （范围路径上未发现记忆层；若这是首次接手，请按项目结构做一次初始化研究。）")
+    for layer in layers:
+        expected = to_cn(expected_layer_depth(layer.parent, root))
+        mark = "" if LAYER_RE.match(layer.name).group(1) == expected else "（层号与路径深度不一致，请核实分层方案）"
+        print(f"  - {layer.relative_to(root).as_posix()}{mark}")
+        index_path = layer / "0_索引.md"
+        if index_path.is_file():
+            print(f"    路由索引：{index_path}")
+        cmd_verify(argparse.Namespace(workspace=str(layer.parent), layer_dir=layer.name,
+                                      refresh=False, by=by))
+    print("交付状态：")
+    _print_workflow_status(root, layers, errors)
+    print("临时脚本库：")
+    try:
+        cfg = json.loads(LOCAL_CONFIG.read_text(encoding="utf-8-sig"))
+        tsg_root = cfg.get("temp_script_root", "")
+        ok = bool(tsg_root) and os.path.isdir(tsg_root)
+        print(f"  {tsg_root or '（未配置）'}  可达：{'是' if ok else '否/未配置'}")
+        if not ok:
+            print("  按 cross-agent-scratchpad-skill 规则，使用/新建临时脚本前先确认库路径。")
+    except Exception:
+        print("  配置不可读；使用/新建临时脚本前先按 scratchpad 规则处理。")
+    print("快速模式不扫描兄弟模块，也不做层级完整性审计。需要时运行：检查 <工作区> 或 接手 <工作区> --full-audit。")
+    print("读取建议：先读相关 0_索引.md 与 5_代办.md；其他主题文件按本次任务再打开。")
+    _report_scan_errors(errors)
 
 
 def _resolve_mem_dir(workspace: str, layer_dir: str) -> Path:
@@ -602,24 +923,28 @@ def _resolve_mem_dir(workspace: str, layer_dir: str) -> Path:
 
 
 def main() -> None:
+    configure_console()
     ap = argparse.ArgumentParser(description="记忆管家（cross-agent-memory 辅助工具；层号=记忆层级序数，层数 1~99 不限）")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("建层", help="就地创建 记忆第X层（0_索引+6件格式参考）；--通用 建中央 记忆_通用")
+    p = sub.add_parser("建层", help="就地创建 记忆第X层（默认仅 0_索引+5_代办）；--完整模板 创建全部六类文档；--通用 建中央 记忆_通用")
     p.add_argument("target", help="要在哪个文件夹里建（就地嵌入）")
     p.add_argument("--层", required=False, default="", help="层号：中文数字（一/二/三/四…）或阿拉伯数字（1/2/3/4…）；应等于记忆层级序数（根=一）")
     p.add_argument("--通用", action="store_true", help="建中央 记忆_通用/（与 --层 互斥）")
+    p.add_argument("--完整模板", action="store_true", help="兼容旧版：同时创建架构/踩坑/偏好/配方/待办/配合六类文档")
     p.set_defaults(fn=cmd_build)
 
     p = sub.add_parser("扫描", help="列出工作区里已有的 记忆第X层（任意层数）")
     p.add_argument("workspace")
     p.set_defaults(fn=cmd_scan)
 
-    p = sub.add_parser("检查", help="层级完整性检查：按记忆层级序数找缺记忆层的候选子模块")
+    p = sub.add_parser("检查", help="完整层级审计：按分层规则列出候选；不自动创建记忆层")
     p.add_argument("workspace")
+    p.add_argument("--scope", default="", help="只审计工作区内指定目录（默认完整工作区）")
+    p.add_argument("--max-depth", type=int, default=0, help="可选深度上限；默认 0 表示不设上限")
     p.set_defaults(fn=cmd_check)
 
-    p = sub.add_parser("索引", help="为某层记忆文件生成/更新指纹档案（记忆索引.json）")
+    p = sub.add_parser("索引", help="更新当前标准记忆文件指纹，并清理已删除文件的旧指纹")
     p.add_argument("workspace", nargs="?", default="", help="所在工作区/父文件夹")
     p.add_argument("--层", dest="layer_dir", default="", help="记忆第X层（如 记忆第四层）")
     p.add_argument("--by", default="", help="更新者署名（agent/harness 名）")
@@ -637,13 +962,18 @@ def main() -> None:
     p.add_argument("--by", default="", help="更新者署名（默认取本机配置 agent_name）")
     p.set_defaults(fn=cmd_refresh_universal)
 
-    p = sub.add_parser("检索", help="跨全部记忆层与 记忆_通用 全文检索关键词（文件:行号:内容）")
+    p = sub.add_parser("检索", help="词面检索记忆；支持按范围和结果数缩小读取")
     p.add_argument("workspace")
-    p.add_argument("keyword")
+    p.add_argument("keyword", help="主关键词或短语（大小写不敏感、词面匹配）")
+    p.add_argument("--term", action="append", default=[], help="追加关键词；可多次传入")
+    p.add_argument("--scope", default="", help="只搜索工作区内指定目录")
+    p.add_argument("--top", type=int, default=20, help="最多返回的命中行数（默认 20）")
     p.set_defaults(fn=cmd_search)
 
-    p = sub.add_parser("接手", help="一键接手入口：记忆_通用检查 + 扫描记忆层 + 层级完整性检查 + 各层并发校验 + 交付流程状态 + 联动配置检查")
+    p = sub.add_parser("接手", help="默认快速接手：校验任务路径上的记忆层；--full-audit 才扫描整个工作区")
     p.add_argument("workspace")
+    p.add_argument("--scope", default="", help="任务目标目录/文件；仅读取目标路径上的记忆层，不扫兄弟模块")
+    p.add_argument("--full-audit", action="store_true", help="显式执行完整记忆层扫描、层级审计和全层指纹校验")
     p.add_argument("--by", default="", help="署名（默认取本机配置 agent_name）")
     p.set_defaults(fn=cmd_takeover)
 

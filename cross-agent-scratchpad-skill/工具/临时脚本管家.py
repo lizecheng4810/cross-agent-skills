@@ -54,6 +54,17 @@ def now_iso():
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
+def configure_console():
+    """Keep Chinese CLI output readable in UTF-8 terminals and captured output."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def today():
     return dt.date.today().isoformat()
 
@@ -412,13 +423,28 @@ def cmd_restore(args):
     print(f"[回迁] 已移回 {origin}")
 
 
-def git_untracked(ws, path):
-    """返回是否未被跟踪。非 git 仓库时按未跟踪处理（仅作为候选提示，最终由 Agent 判断）。"""
-    if not os.path.isdir(os.path.join(ws, ".git")):
+def git_repo_root(ws):
+    """返回 Git 仓库根目录；兼容普通仓库、子目录和 .git 文件型 worktree。"""
+    try:
+        r = subprocess.run(["git", "-C", ws, "rev-parse", "--show-toplevel"],
+                           capture_output=True, timeout=10)
+        output = os.fsdecode(r.stdout).strip()
+        return os.path.abspath(output) if r.returncode == 0 and output else None
+    except Exception:
+        return None
+
+
+def git_untracked(ws, path, repo_root=None):
+    """返回是否未被跟踪。非 git 仓库时按未跟踪处理（仅作候选提示）。"""
+    repo_root = repo_root or git_repo_root(ws)
+    if not repo_root:
         return True
     try:
-        r = subprocess.run(["git", "-C", ws, "ls-files", "--", path],
-                           capture_output=True, text=True, timeout=10)
+        rel = os.path.relpath(path, repo_root)
+        if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+            return True
+        r = subprocess.run(["git", "-C", repo_root, "ls-files", "--error-unmatch", "--", rel],
+                           capture_output=True, timeout=10)
         return r.returncode != 0 or not r.stdout.strip()
     except Exception:
         return True
@@ -432,6 +458,7 @@ def cmd_audit(args):
     idx = load_index(root)
     known = {os.path.basename(s["file"]).lower() for s in idx["scripts"]}
     candidates = []
+    repo_root = git_repo_root(ws)
     for dirpath, dirnames, filenames in os.walk(ws):
         dirnames[:] = [d for d in dirnames
                        if d not in AUDIT_SKIP_DIRS
@@ -443,7 +470,7 @@ def cmd_audit(args):
                 continue
             is_temp = bool(TEMP_NAME_PAT.search(fn)) and not FORMAL_NAME_PAT.match(fn)
             path = os.path.join(dirpath, fn)
-            untracked = git_untracked(ws, path)
+            untracked = git_untracked(ws, path, repo_root)
             depth = len(os.path.relpath(path, ws).split(os.sep))
             score = (2 if is_temp else 0) + (2 if untracked else 0) + (1 if depth <= 2 else 0)
             if score >= 3:
@@ -544,6 +571,7 @@ def cmd_report(args):
 
 
 def main():
+    configure_console()
     ap = argparse.ArgumentParser(description="临时脚本管家")
     sub = ap.add_subparsers(dest="cmd", required=True)
 

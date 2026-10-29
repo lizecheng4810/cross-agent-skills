@@ -1,51 +1,56 @@
-# cross-agent-skills — 跨 Agent / 跨 Harness 三位一体技能套件
+# cross-agent-skills
 
-三个共生设计的 Agent Skills，**掌舵 · 记账 · 打扫**，密不可分：
+面向跨 Agent / 跨 Harness 工作的三件套技能：交付流程、工作区记忆和临时脚本治理。
 
-> 📖 不想看技术文档？先读[《说人话版》](说人话版.md)，一页看懂三件套。
+| 技能 | 职责 |
+|---|---|
+| [cross-agent-dev-workflow-skill](cross-agent-dev-workflow-skill/) | 从研发、验证到整理发布的阶段协议，含验收门和停止闸 |
+| [cross-agent-memory-skill](cross-agent-memory-skill/) | 将可复用上下文保存在工作区，以精简索引和范围化读取支持快速续接 |
+| [cross-agent-scratchpad-skill](cross-agent-scratchpad-skill/) | 临时脚本外置、复用、审计和分级处置 |
 
-| 技能 | 角色 | 职责 |
-|---|---|---|
-| [cross-agent-dev-workflow-skill](cross-agent-dev-workflow-skill/) | 🚦 **总调度（掌舵）** | 项目全生命周期交付总流程：研发迭代 → 测试纠错 → 整理发布三阶段，证据制验收门 + 停止闸 + 阶段状态机（存 memory 的 `5_代办.md`，跨会话跨 Agent 续跑） |
-| [cross-agent-memory-skill](cross-agent-memory-skill/) | 🧠 **大脑（记账）** | **就地记忆**：在真实工作区文件夹树里就地创建/维护分层记忆（`记忆第X层`，层号=记忆层级序数，层数 Agent 深研后自定），每层 0_索引 + 6 件，先读→合并→写回，sha256 指纹并发检测，主动补齐新增子工程的记忆层 |
-| [cross-agent-scratchpad-skill](cross-agent-scratchpad-skill/) | 🧹 **清洁工（打扫）** | **临时脚本治理**：临时脚本一律存用户指定的外部库，先复用后创建，遗留物分级审计（复用→迁入 / 无价值→清理 / 来源不明→隔离等确认），真实工程文件绝不自动删 |
+## 接手方式
 
-## 三位一体怎么协作
+常规接手按任务路径读取记忆：根层 `0_索引.md` 与当前 `5_代办.md`，然后是范围层索引、交接和本任务相关主题。不会默认读取所有层和所有主题；只有首次初始化、记忆冲突、结构变化、跨模块范围或用户要求时才扩大审查。
 
-```
-接手任务 ── 一键入口：python 记忆管家.py 接手 <工作区>（三技能共用）
-   │  读记忆 0_索引/分层方案 → 读 5_代办「🚦 交付流程状态」定续跑点 → 遗留物审计（增量）
-   ↓
-阶段1 研发迭代   深度研究+GitHub/全网资产检索 → 方案（拍板线问用户）→ 多轮实现
-   │            （决策/踩坑实时入 memory；临时脚本全走 scratchpad 外部库）
-   ↓ 证据制验收门
-阶段2 测试纠错   实际运行 → 逐文件审查 → 纠错循环（问题/根因/修复/验证+回归）
-   ↓ 验收门：已知问题清单为空 + 清单全过
-阶段3 整理发布   结构整合 → 遗留物分级处置（scratchpad 红线）→ 打包 → 发布清单
-   ↓
-报告「已达到可上线发布状态」→ 停止闸生效，不做多余的事
+可选工具的快速入口：
+
+```powershell
+python "cross-agent-memory-skill\工具\记忆管家.py" 接手 "<工作区>" --scope "<任务路径>"
 ```
 
-- **状态承载**：dev-workflow 的阶段状态机存在 memory 的 `5_代办.md`——换 Agent、换设备、换会话都能从断点续跑。
-- **删除安全**：dev-workflow 的一切删除委托 scratchpad 分级协议；用户授权「全部权限」也不解除红线。
-- **可单独用，整装最佳**：三技能各自独立可用；未装伙伴时 dev-workflow 按 SKILL.md §六 三条铁律降级。
+未给范围时只检查根层。完整记忆审计需显式使用 `--full-audit`。根索引明确列出的例外目录会从完整性候选扫描中排除；候选只用于提示，不会自动建层。
 
-## 设计亮点
-
-- **跨 Agent / 跨 Harness**：标准 SKILL.md 格式（[agentskills.io](https://agentskills.io/specification)），ZCode / Codex CLI / Cursor / Claude Code 等任何支持 skills 的工具都能加载。
-- **工具层兜底协议**：不只靠提示词纪律——`记忆管家.py`（接手/建层含 --通用/刷新通用/检索/索引/校验指纹）、`临时脚本管家.py`（配置/查/登记含查重/审计/迁移/原子索引）、`发布管家.py`（校验技能/三位一体互链检查/打包/发布检查）。
-- **深度联动**：统一署名（`~/.agent-tsg/config.json` 的 `agent_name`，由记忆管家与临时脚本管家两工具共用）；`联动/` 文档两两互指成环；审计结论按约定写入记忆对应文件；memory 另有中央 `记忆_通用/`（跨项目通用知识，任何记忆层可引用）。
-- **规模分档 + 停止闸**：轻量/标准/深度三档，小任务不套重流程；验收门一过即停，防过度打磨。
-- **版本可追溯**：各技能 SKILL.md 带 `metadata.version`，套件变更见 [CHANGELOG.md](CHANGELOG.md)。
+```text
+阶段0 接手与续跑
+  ↓
+阶段1 研发迭代 → 阶段验收
+  ↓
+阶段2 实际验证、审查、纠错 → 验收门
+  ↓
+阶段3 整理和发布准备 → 达标后停止
+```
 
 ## 安装
 
-各技能目录内有 `安装指引.md`；把对应文件夹拷入目标 harness 的 skills 目录即可（如 ZCode：`~/.zcode/skills/`，Claude Code：`~/.claude/skills/`），或直接下载 [Release](https://github.com/lizecheng4810/cross-agent-skills/releases) 中的对应 zip 解压即得技能文件夹。**建议三件套整装**。
+各技能目录包含独立的 `安装指引.md`。把完整技能文件夹放进目标 Harness 的 skills 目录。工具为可选组件，无 Python 时仍可按技能文件手工执行。
 
-## 环境要求
+工具保持 Python 3.8+ 兼容；Python 3.8 已于 2024-10-07 结束支持，建议日常使用仍受支持的 Python 版本。[Python 3.8.20 发布说明](https://www.python.org/downloads/release/python-3820/)
 
-- 无必须依赖（协议可纯手工执行）；推荐 Python 3.8+ 以使用辅助工具。
+## 研究与版本
+
+- [Agent Skills 规范](https://agentskills.io/specification)
+- 套件历史见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 本地验证
+
+在套件根目录执行回归测试：
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+技能结构、三方联动和最终 ZIP 由 `cross-agent-dev-workflow-skill/工具/发布管家.py` 提供检查命令；发布检查要求三个 ZIP 已先完成打包。
 
 ## License
 
-[MIT](LICENSE) — 同行可自由安装、使用、修改、分发。
+[MIT](LICENSE)。

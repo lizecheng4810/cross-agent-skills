@@ -6,7 +6,7 @@
   校验技能 <技能目录>          按 Agent Skills 规范校验 SKILL.md
   三位一体 <套件根目录>         校验三技能互链对称（联动文档双向在位、SKILL.md 互提）
   打包 <技能目录> [--out <zip>] 打发布 zip（排除缓存/记忆/系统文件）
-  发布检查 <套件根目录>         zip 新鲜度 / README 覆盖 / LICENSE / ship 清单总检
+  发布检查 <套件根目录>         zip 内容/CRC/许可证一致性 / README / ship 清单总检
 
 Python 3.8+，无第三方依赖。退出码：0=全过，1=有 ✗。
 """
@@ -227,7 +227,8 @@ def cmd_pack(skill_dir, out_zip=None):
     with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as zf:
         for rel in files:
             zf.write(os.path.join(skill_dir, rel), rel)
-    h = hashlib.sha256(open(out_zip, "rb").read()).hexdigest()[:16]
+    with open(out_zip, "rb") as f:
+        h = hashlib.sha256(f.read()).hexdigest()[:16]
     size = os.path.getsize(out_zip)
     print(f"✔ 已打包 {len(files)} 个文件 → {out_zip}")
     print(f"  大小 {size:,} 字节 · sha256:{h} · {_fmt_time(os.path.getmtime(out_zip))}")
@@ -235,13 +236,20 @@ def cmd_pack(skill_dir, out_zip=None):
 
 
 def cmd_release_check(root):
-    """发布检查 <套件根>：zip 新鲜度 / README 覆盖 / LICENSE / ship 清单。"""
+    """发布检查 <套件根>：ZIP 内容与来源一致性 / CRC / LICENSE / README / ship 清单。"""
     print(f"=== 发布检查 {root} ===")
-    errors = warns = 0
-    if not os.path.isfile(os.path.join(root, "LICENSE")):
+    errors = 0
+    root_license_path = os.path.join(root, "LICENSE")
+    root_license = None
+    if not os.path.isfile(root_license_path):
         fail("套件根缺少 LICENSE"); errors += 1
     else:
-        ok("LICENSE 在位")
+        try:
+            with open(root_license_path, "rb") as f:
+                root_license = f.read()
+            ok("套件根 LICENSE 在位")
+        except OSError as e:
+            fail(f"无法读取套件根 LICENSE：{e}"); errors += 1
     try:
         readme = read_text(os.path.join(root, "README.md"))
     except OSError:
@@ -258,20 +266,56 @@ def cmd_release_check(root):
             ok(f"README 已覆盖 {d}")
         else:
             fail(f"README 未提及 {d}"); errors += 1
+        skill_license_path = os.path.join(p, "LICENSE")
+        if not os.path.isfile(skill_license_path):
+            fail(f"{d} 缺少独立分发所需的 LICENSE"); errors += 1
+        elif root_license is not None:
+            try:
+                with open(skill_license_path, "rb") as f:
+                    skill_license = f.read()
+                if skill_license != root_license:
+                    fail(f"{d}/LICENSE 与套件根 LICENSE 不一致"); errors += 1
+                else:
+                    ok(f"{d}/LICENSE 与套件根版本一致")
+            except OSError as e:
+                fail(f"无法读取 {d}/LICENSE：{e}"); errors += 1
         zip_path = os.path.join(root, d + ".zip")
         ship = _ship_files(p)
-        newest = max((os.path.getmtime(os.path.join(p, rel)) for rel in ship), default=0)
         if not os.path.isfile(zip_path):
-            warn(f"{d}.zip 不存在（如需分发请先 打包）"); warns += 1
-            continue
-        zip_mtime = os.path.getmtime(zip_path)
-        if newest > zip_mtime + 2:
-            fail(f"{d}.zip 已过期：最新源文件 {_fmt_time(newest)} 晚于 zip {_fmt_time(zip_mtime)}，请重新打包")
+            fail(f"{d}.zip 不存在；发布检查要求三个技能包全部就位")
             errors += 1
-        else:
-            ok(f"{d}.zip 新鲜（{len(ship)} 个文件入包）")
+            continue
+        try:
+            with zipfile.ZipFile(zip_path, "r") as archive:
+                names = archive.namelist()
+                expected = set(ship)
+                actual = set(names)
+                bad_member = archive.testzip()
+                if len(names) != len(actual):
+                    fail(f"{d}.zip 含重复成员名"); errors += 1
+                elif bad_member is not None:
+                    fail(f"{d}.zip CRC 校验失败：{bad_member}"); errors += 1
+                elif actual != expected:
+                    missing = sorted(expected - actual)
+                    extra = sorted(actual - expected)
+                    fail(f"{d}.zip 成员与源目录不一致（缺少 {missing[:5]}；多出 {extra[:5]}）")
+                    errors += 1
+                else:
+                    mismatched = []
+                    for rel in ship:
+                        with open(os.path.join(p, rel), "rb") as f:
+                            if archive.read(rel) != f.read():
+                                mismatched.append(rel)
+                    if mismatched:
+                        fail(f"{d}.zip 内容与源文件不一致：{mismatched[:5]}"); errors += 1
+                    elif "LICENSE" not in actual or root_license is None or archive.read("LICENSE") != root_license:
+                        fail(f"{d}.zip 未包含与套件根版本一致的 LICENSE"); errors += 1
+                    else:
+                        ok(f"{d}.zip 内容与源目录一致（{len(ship)} 个文件，含 LICENSE）")
+        except (OSError, zipfile.BadZipFile, KeyError) as e:
+            fail(f"{d}.zip 无法读取或验证：{e}"); errors += 1
 
-    print(f"结论：{'✗ 存在必须修复项' if errors else '✔ 可发布'}（⚠ {warns} 项提醒）")
+    print(f"结论：{'✗ 存在必须修复项' if errors else '✔ 可发布'}")
     return 1 if errors else 0
 
 

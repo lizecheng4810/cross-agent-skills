@@ -48,14 +48,14 @@ switch ($命令) {
     }
     default {
         Write-Host "记忆助手（cross-agent-memory · 转发到 记忆管家.py）"
-        Write-Host "  接手 <工作区>                          一键接手入口：扫描+完整性检查+并发校验+联动检查"
+        Write-Host "  接手 <工作区> [--scope <路径>]          快速检查根层/目标路径；--full-audit 才完整审计"
         Write-Host "  建层 <文件夹> --层 1|2|3|4…（或 一/二/三/四…）  就地建 记忆第X层（层号=记忆层级序数，1~99 不限）；建层 <工作区> --通用 建中央 记忆_通用"
         Write-Host "  扫描 <工作区>                          列出已有的 记忆第X层 文件夹"
-        Write-Host "  检查 <工作区>                          层级完整性检查：按记忆层级序数找缺记忆层的子模块"
+        Write-Host "  检查 <工作区> [--scope <路径>]         完整性候选检查（不限深度，可用 --max-depth 限深）"
         Write-Host "  索引 [<工作区>] --层 记忆第X层 --by 署名   生成/更新该层指纹档案（记忆索引.json）"
         Write-Host "  校验 [<工作区>] --层 记忆第X层 [--refresh]  并发检测：报告被其他 Agent 改过的文件"
         Write-Host "  刷新通用 <工作区>                     重建所有层 0_索引 的「🔗 通用知识」段并刷新指纹"
-        Write-Host "  检索 <工作区> <关键词>                 跨全部记忆层与 记忆_通用 全文检索"
-        Write-Host "提示：判断层级、深度阅读并填写记忆由 Agent 按 SKILL.md 自主完成，本脚本仅辅助。"
+        Write-Host "  检索 <工作区> <关键词> [--scope ...]  词面检索（可加 --term 与 --top 限定）"
+        Write-Host "提示：按需读取、判断层级并填写记忆由 Agent 按 SKILL.md 自主完成；本脚本仅辅助。"
     }
 }

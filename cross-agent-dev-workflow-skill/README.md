@@ -7,7 +7,7 @@
 把一套手写的重流程提示词（深度研发迭代 / 深度测试纠错 / 深度整理发布 / 全程挂载记忆与脚本治理）固化成任何 Agent / Harness 都能执行的**项目全生命周期交付协议**：
 
 ```
-阶段0 接手（与两伙伴共用一键入口：读记忆/分层方案/遗留物审计）
+阶段0 接手（按任务路径定位记忆与续跑状态；脚本审计按 scratchpad 规则执行）
    ↓
 阶段1 研发迭代   深度研究 → GitHub/全网检索可复用资产 → 方案（拍板线事项问用户）→ 多轮实现
    ↓ 验收门（证据制）
@@ -33,14 +33,14 @@
 
 | 伙伴 | 在流程里的角色 | 联动文档 |
 |---|---|---|
-| `cross-agent-memory-skill` | 大脑：阶段状态机存 `5_代办.md`，决策/踩坑/偏好实时入记忆，跨会话跨 Agent 续跑 | [联动/cross-agent-memory.md](联动/cross-agent-memory.md) |
+| `cross-agent-memory-skill` | 大脑：阶段状态存 `5_代办.md`，仅把长期有用的决策/踩坑/偏好写入记忆，按范围快速续跑 | [联动/cross-agent-memory.md](联动/cross-agent-memory.md) |
 | `cross-agent-scratchpad-skill` | 清洁工：研发/测试期的临时脚本治理；发布期的遗留物分级处置与删除红线 | [联动/cross-agent-scratchpad.md](联动/cross-agent-scratchpad.md) |
 
 两个伙伴未安装时可降级运行（三条铁律见 SKILL.md §六），但建议三件套整装。
 
 ## 工具（可选兜底，Python 3.8+）
 
-`工具/发布管家.py`：`校验技能`（SKILL.md 规范校验）、`三位一体`（互链对称检查）、`打包`（发布 zip，自动排除缓存与记忆）、`发布检查`（zip 新鲜度/README 覆盖/LICENSE/ship 清单总检）。Windows 有 `发布管家.ps1` 薄封装。无 Python 时按协议手工执行完全成立。
+`工具/发布管家.py`：`校验技能`（SKILL.md 规范校验）、`三位一体`（互链对称检查）、`打包`（发布 zip，自动排除缓存与记忆）、`发布检查`（三个 ZIP 必须齐全，并核对内容、CRC、随包许可证、README 覆盖和 ship 清单）。Windows 有 `发布管家.ps1` 薄封装。无 Python 时按协议手工执行完全成立。
 
 ## 安装
 
@@ -48,4 +48,4 @@
 
 ## License
 
-MIT（随套件根 [LICENSE](../LICENSE)）。
+MIT，见 [LICENSE](LICENSE)。
