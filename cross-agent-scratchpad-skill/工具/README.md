@@ -4,8 +4,6 @@
 
 跨平台，Python 3.8+，无第三方依赖。命令一览：
 
-保留 3.8 兼容是为了兼容旧环境；Python 3.8 已结束上游支持，建议使用仍受支持的 Python 版本。[Python 3.8.20 发布说明](https://www.python.org/downloads/release/python-3820/)
-
 | 命令 | 作用 |
 |---|---|
 | `配置 [--path <目录>] [--name <署名>]` | 查看/设置本机临时脚本根目录（写 `~/.agent-tsg/config.json`）并初始化 reusable/sessions/quarantine/manifests/reports 结构；`--name` 设置默认署名 `agent_name`（记忆管家/临时脚本管家共用） |

@@ -3,6 +3,12 @@
 版本号记录在各技能 SKILL.md 的 `metadata.version`；套件整体以本文件为准。
 发布页：<https://github.com/lizecheng4810/cross-agent-skills/releases>（每个版本附三个技能的 zip 安装包）
 
+## 2026-10-30 · v1.2.1 回退版 / memory 1.1.0 / dev-workflow 1.0.0 / scratchpad 1.1.0
+
+- 根据用户选择，将三项技能恢复为上一公开版 v1.1.0 的内容和对应安装包。
+- `v1.2.1` 是本次套件级回退发布号；原 `v1.2.0` 标签与 Release 保留为历史记录。
+- 三个 ZIP 复用 v1.1.0 Release 的原始包，并在发布前核对 SHA-256 与内容。
+
 ## 2026-10-29 · v1.2.0 / memory 1.2.0 / dev-workflow 1.0.3 / scratchpad 1.1.2
 
 ### 设计改进

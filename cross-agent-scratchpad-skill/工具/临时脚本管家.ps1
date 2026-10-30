@@ -23,28 +23,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $pyScript = Join-Path $PSScriptRoot "临时脚本管家.py"
-try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
-function Resolve-Python {
-    foreach ($candidate in @("python", "py")) {
-        $command = Get-Command $candidate -ErrorAction SilentlyContinue
-        if (-not $command) { continue }
-        try {
-            if ($candidate -eq "py") {
-                & $command.Source -3 --version 2>$null | Out-Null
-            } else {
-                & $command.Source --version 2>$null | Out-Null
-            }
-            if ($LASTEXITCODE -eq 0) {
-                return [pscustomobject]@{ Source = $command.Source; Launcher = ($candidate -eq "py") }
-            }
-        } catch {}
-    }
-    return $null
+function Test-Python {
+    try { & python --version 2>$null | Out-Null; return $LASTEXITCODE -eq 0 } catch { return $false }
 }
 
-$pythonCommand = Resolve-Python
-if ($pythonCommand) {
+if (Test-Python) {
     # 每个命令只追加它支持的参数，避免 argparse 报错
     $argList = @($pyScript, $Cmd)
     switch -Regex ($Cmd) {
@@ -87,11 +71,7 @@ if ($pythonCommand) {
             if ($Yes) { $argList += "--yes" }
         }
     }
-    if ($pythonCommand.Launcher) {
-        & $pythonCommand.Source -3 @argList
-    } else {
-        & $pythonCommand.Source @argList
-    }
+    & python @argList
     exit $LASTEXITCODE
 }
 

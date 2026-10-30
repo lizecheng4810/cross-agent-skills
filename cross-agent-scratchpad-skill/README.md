@@ -14,7 +14,7 @@
 - **外部统一库存放**：用户每台设备指定一个工作区外的临时脚本库（`~/.agent-tsg/config.json` 记录，未配置必问用户）；
 - **先复用后创建**：建脚本前必查 `manifests/index.json` 索引（用途/语言/哈希/使用次数）；
 - **分级处置**：自己的脚本自动治理；历史遗留按复用价值迁移或删除；来源不明只隔离（quarantine/）+ 报告 + 等用户确认；真实工程文件绝不自动删；
-- **深度联动（三位一体）**：与 `cross-agent-memory`（就地记忆）、`cross-agent-dev-workflow-skill`（项目交付总流程）协作；长期有用的偏好、审计状态和待办写入对应记忆层，按任务路径续接；dev-workflow 的删除操作全部委托本技能分级红线。
+- **深度联动（三位一体）**：与 `cross-agent-memory`（就地记忆）、`cross-agent-dev-workflow-skill`（项目交付总流程）共生——判断、偏好、审计结论、待办全部入分层记忆，跨 Agent 延续；dev-workflow 的删除操作全部委托本技能分级红线。
 
 ## 目录结构
 
@@ -32,8 +32,6 @@ README.md                         # 本文件
 ```
 
 ## 快速上手
-
-以下命令从 `cross-agent-scratchpad-skill` 技能目录运行。
 
 ```powershell
 # 1. 配置本机临时脚本库（首次）
@@ -53,8 +51,3 @@ python 工具\临时脚本管家.py 报告
 ```
 
 日常使用不需要记命令——装好 skill 后，Agent 会按 SKILL.md 协议在接手任务、创建脚本、结束任务三个节点自动执行。
-安装：拷贝本文件夹到目标 harness 的 skills 目录（或从[套件 Release](https://github.com/lizecheng4810/cross-agent-skills/releases) 下载 zip 解压获得本文件夹）。
-
-## License
-
-MIT License，见 [LICENSE](LICENSE)。

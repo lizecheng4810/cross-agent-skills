@@ -7,7 +7,7 @@
 把一套手写的重流程提示词（深度研发迭代 / 深度测试纠错 / 深度整理发布 / 全程挂载记忆与脚本治理）固化成任何 Agent / Harness 都能执行的**项目全生命周期交付协议**：
 
 ```
-阶段0 接手（按任务路径定位记忆与续跑状态；脚本审计按 scratchpad 规则执行）
+阶段0 接手（与两伙伴共用一键入口：读记忆/分层方案/遗留物审计）
    ↓
 阶段1 研发迭代   深度研究 → GitHub/全网检索可复用资产 → 方案（拍板线事项问用户）→ 多轮实现
    ↓ 验收门（证据制）
@@ -17,10 +17,6 @@
    ↓ 验收门
 报告「已达到可上线发布状态」→ 停止闸生效，不做多余的事
 ```
-
-## 触发方式（宽触发）
-
-凡「制作/交付制品」类任务都会自动触发：**创造**（制作/开发/做一个/搭建/实现…）、**迭代**（改进/优化/重构/加功能…）、**质量**（测试/调试/修复/审查…）、**发布**（上线/打包/部署/整理…）、**深度**（深度研究产出成品/迭代到可上线…）。触发后先定档：小改动走轻量路径，深度任务才全量三阶段——宽进严分档，不会被重流程拖慢小事。
 
 ## 四条强制总则
 
@@ -33,19 +29,19 @@
 
 | 伙伴 | 在流程里的角色 | 联动文档 |
 |---|---|---|
-| `cross-agent-memory-skill` | 大脑：阶段状态存 `5_代办.md`，仅把长期有用的决策/踩坑/偏好写入记忆，按范围快速续跑 | [联动/cross-agent-memory.md](联动/cross-agent-memory.md) |
+| `cross-agent-memory-skill` | 大脑：阶段状态机存 `5_代办.md`，决策/踩坑/偏好实时入记忆，跨会话跨 Agent 续跑 | [联动/cross-agent-memory.md](联动/cross-agent-memory.md) |
 | `cross-agent-scratchpad-skill` | 清洁工：研发/测试期的临时脚本治理；发布期的遗留物分级处置与删除红线 | [联动/cross-agent-scratchpad.md](联动/cross-agent-scratchpad.md) |
 
 两个伙伴未安装时可降级运行（三条铁律见 SKILL.md §六），但建议三件套整装。
 
 ## 工具（可选兜底，Python 3.8+）
 
-`工具/发布管家.py`：`校验技能`（SKILL.md 规范校验）、`三位一体`（互链对称检查）、`打包`（发布 zip，自动排除缓存与记忆）、`发布检查`（三个 ZIP 必须齐全，并核对内容、CRC、随包许可证、README 覆盖和 ship 清单）。Windows 有 `发布管家.ps1` 薄封装。无 Python 时按协议手工执行完全成立。
+`工具/发布管家.py`：`校验技能`（SKILL.md 规范校验）、`三位一体`（互链对称检查）、`打包`（发布 zip，自动排除缓存与记忆）、`发布检查`（zip 新鲜度/README 覆盖/LICENSE/ship 清单总检）。Windows 有 `发布管家.ps1` 薄封装。无 Python 时按协议手工执行完全成立。
 
 ## 安装
 
-见 [安装指引.md](安装指引.md)——标准 SKILL.md 格式，ZCode / Codex CLI / Cursor / Claude Code 等任何支持 skills 的工具都能加载；也可从[套件 Release](https://github.com/lizecheng4810/cross-agent-skills/releases) 下载 zip 解压获得本文件夹。
+见 [安装指引.md](安装指引.md)——标准 SKILL.md 格式，ZCode / Codex CLI / Cursor / Claude Code 等任何支持 skills 的工具都能加载。
 
 ## License
 
-MIT，见 [LICENSE](LICENSE)。
+MIT（随套件根 [LICENSE](../LICENSE)）。
